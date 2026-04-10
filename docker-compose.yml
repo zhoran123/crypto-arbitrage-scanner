@@ -1,0 +1,14 @@
+services:
+  arb-scanner:
+    build: .
+    container_name: arb-scanner
+    restart: always
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

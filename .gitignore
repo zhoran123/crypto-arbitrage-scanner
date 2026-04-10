@@ -1,0 +1,14 @@
+node_modules/
+frontend/node_modules/
+frontend/build/
+__pycache__/
+*.pyc
+.env
+*.egg-info/
+dist/
+.DS_Store
+Thumbs.db
+.vs/
+.claude/settings.local.json
+*.slnx
+*.suo

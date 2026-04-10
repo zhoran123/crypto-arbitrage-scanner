@@ -1,0 +1,12 @@
+{
+  "python.defaultInterpreterPath": "./backend/venv/Scripts/python",
+  "editor.formatOnSave": true,
+  "editor.tabSize": 4,
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/node_modules": true,
+    "**/venv": true
+  },
+  "editor.rulers": [88]
+}

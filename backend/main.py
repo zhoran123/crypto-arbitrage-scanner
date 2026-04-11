@@ -316,8 +316,8 @@ async def get_health():
 
 @app.get("/price-history")
 async def get_price_history(symbol: str, tf: str = "1m"):
-    if tf not in ("1m", "5m", "15m", "1h"):
-        return {"error": "tf must be 1m, 5m, 15m, or 1h"}
+    if tf not in ("1m", "5m", "15m", "30m", "1h", "4h"):
+        return {"error": "tf must be 1m, 5m, 15m, 30m, 1h, or 4h"}
     return price_history.get_history(symbol.upper(), tf)
 
 

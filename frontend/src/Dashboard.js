@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from "recharts";
 import Nav from "./Nav";
+import ChartsTab from "./ChartsTab";
 
 const _h = window.location.hostname;
 const _p = window.location.port === "3000" ? "8000" : window.location.port;
@@ -92,9 +92,10 @@ export default function Dashboard() {
   };
 
   const filtSig = signals.filter(s => s.net_spread_pct >= sigMin);
-  const TABS = ["spreads", "signals", "health", "history", "blacklist"];
+  const TABS = ["spreads", "charts", "signals", "health", "history", "blacklist"];
   const TAB_LABELS = {
     spreads: "Spreads",
+    charts: "Charts",
     signals: `Signals (${filtSig.length})`,
     health: "Health",
     history: "History",
@@ -102,6 +103,7 @@ export default function Dashboard() {
   };
   const TAB_ICONS = {
     spreads: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>,
+    charts: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/><line x1="2" y1="22" x2="22" y2="22"/></svg>,
     signals: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>,
     health: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>,
     history: <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>,
@@ -192,6 +194,7 @@ export default function Dashboard() {
             transition={{ duration: 0.2 }}
           >
             {tab === "spreads" && <SpreadsTab spreads={spreads} search={search} setSearch={setSearch} min={tblMin} setMin={setTblMin} onBlock={block} blocked={blacklist} />}
+            {tab === "charts" && <ChartsTab spreads={spreads} />}
             {tab === "signals" && (
               filtSig.length === 0
                 ? <Empty t="Waiting for signals..." d={`${stats?.price_updates?.toLocaleString() || 0} updates processed. Signals appear when spreads exceed thresholds.`} />
@@ -302,128 +305,7 @@ function Metric({ l, v, h }) {
   );
 }
 
-const TFS = ["1m", "5m", "15m", "1h"];
-
-function SpreadChart({ symbol }) {
-  const [tf, setTf] = useState("1m");
-  const [data, setData] = useState(null);
-  const [hidden, setHidden] = useState({});
-
-  useEffect(() => {
-    let a = true;
-    async function load() {
-      try {
-        const r = await fetch(`${API}/price-history?symbol=${symbol}&tf=${tf}`);
-        if (a) setData(await r.json());
-      } catch {}
-    }
-    load();
-    const id = setInterval(load, tf === "1m" ? 10000 : 30000);
-    return () => { a = false; clearInterval(id); };
-  }, [symbol, tf]);
-
-  const toggleExch = ex => setHidden(h => ({ ...h, [ex]: !h[ex] }));
-
-  if (!data) return <div style={{ padding: 24, textAlign: "center", color: "#475569", fontSize: 12 }}>Loading chart...</div>;
-
-  const exchanges = Object.keys(data).filter(ex => data[ex].length > 0);
-  if (!exchanges.length) return <div style={{ padding: 24, textAlign: "center", color: "#475569", fontSize: 12 }}>No price history yet — data accumulates after launch</div>;
-
-  // Merge all exchanges into unified timeline for recharts
-  const timeMap = {};
-  exchanges.forEach(ex => {
-    data[ex].forEach(c => {
-      if (!timeMap[c.t]) timeMap[c.t] = { t: c.t };
-      timeMap[c.t][ex] = c.c; // close price
-    });
-  });
-  const chartData = Object.values(timeMap).sort((a, b) => a.t - b.t);
-
-  return (
-    <motion.div
-      initial={{ height: 0, opacity: 0 }}
-      animate={{ height: "auto", opacity: 1 }}
-      exit={{ height: 0, opacity: 0 }}
-      transition={{ duration: 0.25 }}
-      style={{ overflow: "hidden", background: "rgba(8,9,14,0.8)", borderBottom: "1px solid rgba(14,165,233,0.1)" }}
-    >
-      <div style={{ padding: "16px 20px" }}>
-        {/* Header: timeframes + exchange toggles */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, flexWrap: "wrap", gap: 10 }}>
-          <div style={{ display: "flex", gap: 4 }}>
-            {TFS.map(t => (
-              <button key={t} onClick={() => setTf(t)} style={{
-                background: tf === t ? "rgba(14,165,233,0.15)" : "rgba(14,165,233,0.04)",
-                border: tf === t ? "1px solid rgba(14,165,233,0.3)" : "1px solid rgba(14,165,233,0.08)",
-                borderRadius: 6, padding: "4px 12px", cursor: "pointer",
-                color: tf === t ? "#0ea5e9" : "#475569", fontSize: 11, fontWeight: 600,
-                fontFamily: "'JetBrains Mono',monospace", transition: "all 0.15s",
-              }}>{t}</button>
-            ))}
-          </div>
-          <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-            {exchanges.map(ex => (
-              <button key={ex} onClick={() => toggleExch(ex)} style={{
-                background: hidden[ex] ? "rgba(30,41,59,0.4)" : `${EX_COL[ex] || "#94a3b8"}18`,
-                border: `1px solid ${hidden[ex] ? "rgba(30,41,59,0.5)" : (EX_COL[ex] || "#94a3b8") + "40"}`,
-                borderRadius: 6, padding: "3px 10px", cursor: "pointer",
-                color: hidden[ex] ? "#334155" : (EX_COL[ex] || "#94a3b8"),
-                fontSize: 10, fontWeight: 600, fontFamily: "'JetBrains Mono',monospace",
-                transition: "all 0.15s", textDecoration: hidden[ex] ? "line-through" : "none",
-                opacity: hidden[ex] ? 0.5 : 1,
-              }}>{ex}</button>
-            ))}
-          </div>
-        </div>
-
-        {/* Chart */}
-        <ResponsiveContainer width="100%" height={220}>
-          <LineChart data={chartData} margin={{ top: 4, right: 8, bottom: 4, left: 8 }}>
-            <XAxis
-              dataKey="t"
-              tickFormatter={t => { const d = new Date(t * 1000); return d.getHours().toString().padStart(2, "0") + ":" + d.getMinutes().toString().padStart(2, "0"); }}
-              tick={{ fill: "#334155", fontSize: 10, fontFamily: "'JetBrains Mono',monospace" }}
-              axisLine={{ stroke: "rgba(14,165,233,0.08)" }}
-              tickLine={false}
-              minTickGap={40}
-            />
-            <YAxis
-              domain={["auto", "auto"]}
-              tick={{ fill: "#334155", fontSize: 10, fontFamily: "'JetBrains Mono',monospace" }}
-              axisLine={false}
-              tickLine={false}
-              width={65}
-              tickFormatter={v => fmtP(v)}
-            />
-            <Tooltip
-              contentStyle={{
-                background: "rgba(12,14,24,0.95)", border: "1px solid rgba(14,165,233,0.15)",
-                borderRadius: 8, fontSize: 11, fontFamily: "'JetBrains Mono',monospace",
-              }}
-              labelFormatter={t => { const d = new Date(t * 1000); return d.toLocaleTimeString(); }}
-              formatter={(val, name) => ["$" + fmtP(val), name]}
-            />
-            {exchanges.map(ex => (
-              <Line
-                key={ex}
-                type="monotone"
-                dataKey={ex}
-                stroke={EX_COL[ex] || "#94a3b8"}
-                strokeWidth={1.5}
-                dot={false}
-                hide={!!hidden[ex]}
-                connectNulls
-              />
-            ))}
-          </LineChart>
-        </ResponsiveContainer>
-      </div>
-    </motion.div>
-  );
-}
-
 function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked }) {
-  const [expanded, setExpanded] = useState(null);
   const f = spreads.filter(s => {
     if (search && !s.symbol.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, ""))) return false;
     return s.net_spread >= min;
@@ -458,47 +340,29 @@ function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked 
           <tbody>
             {f.map((s, i) => {
               const nc = spreadCol(s.net_spread);
-              const isOpen = expanded === s.symbol;
               return (
-                <React.Fragment key={s.symbol}>
-                  <tr
-                    style={{ background: i % 2 === 0 ? "rgba(8,9,14,0.5)" : "rgba(12,14,24,0.5)", cursor: "pointer", transition: "background 0.15s" }}
-                    onClick={() => setExpanded(isOpen ? null : s.symbol)}
-                  >
-                    <td style={{ ...S.td, color: "#1e293b" }}>{i + 1}</td>
-                    <td style={{ ...S.td, textAlign: "left" }}>
-                      <span style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                        <svg width="10" height="10" viewBox="0 0 10 10" fill="none" style={{ transition: "transform 0.2s", transform: isOpen ? "rotate(90deg)" : "rotate(0deg)" }}>
-                          <path d="M3 1L7 5L3 9" stroke="#475569" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                        </svg>
-                        <span style={{ fontWeight: 700, color: "#e2e8f0", fontSize: 13 }}>{s.symbol.replace("USDT", "")}</span>
-                        <span style={{ color: "#334155", fontSize: 11 }}>/USDT</span>
-                      </span>
-                    </td>
-                    <td style={S.td}><span style={{ color: EX_COL[s.buy_on] || "#94a3b8", fontWeight: 600 }}>{s.buy_on}</span></td>
-                    <td style={{ ...S.td, color: "#64748b" }}>${fmtP(s.buy_price)}</td>
-                    <td style={S.td}><span style={{ color: EX_COL[s.sell_on] || "#94a3b8", fontWeight: 600 }}>{s.sell_on}</span></td>
-                    <td style={{ ...S.td, color: "#64748b" }}>${fmtP(s.sell_price)}</td>
-                    <td style={{ ...S.td, color: "#64748b" }}>{s.gross_spread.toFixed(3)}%</td>
-                    <td style={{ ...S.td, color: nc, fontWeight: 700 }}>{s.net_spread >= 0 ? "+" : ""}{s.net_spread.toFixed(3)}%</td>
-                    <td style={{ ...S.td, color: "#334155" }}>{s.exchanges}</td>
-                    <td style={S.td}>
-                      <button onClick={e => { e.stopPropagation(); onBlock(s.symbol); }} style={{
-                        background: "none", border: "none", cursor: "pointer", fontSize: 11,
-                        opacity: blocked.includes(s.symbol) ? 0.2 : 0.5, color: "#ef4444",
-                        transition: "opacity 0.2s", display: "flex", alignItems: "center", gap: 3,
-                        fontFamily: "'JetBrains Mono',monospace", fontWeight: 600,
-                      }}>&times; block</button>
-                    </td>
-                  </tr>
-                  {isOpen && (
-                    <tr>
-                      <td colSpan={10} style={{ padding: 0, border: "none" }}>
-                        <SpreadChart symbol={s.symbol} />
-                      </td>
-                    </tr>
-                  )}
-                </React.Fragment>
+                <tr key={s.symbol} style={{ background: i % 2 === 0 ? "rgba(8,9,14,0.5)" : "rgba(12,14,24,0.5)" }}>
+                  <td style={{ ...S.td, color: "#1e293b" }}>{i + 1}</td>
+                  <td style={{ ...S.td, textAlign: "left" }}>
+                    <span style={{ fontWeight: 700, color: "#e2e8f0", fontSize: 13 }}>{s.symbol.replace("USDT", "")}</span>
+                    <span style={{ color: "#334155", fontSize: 11 }}>/USDT</span>
+                  </td>
+                  <td style={S.td}><span style={{ color: EX_COL[s.buy_on] || "#94a3b8", fontWeight: 600 }}>{s.buy_on}</span></td>
+                  <td style={{ ...S.td, color: "#64748b" }}>${fmtP(s.buy_price)}</td>
+                  <td style={S.td}><span style={{ color: EX_COL[s.sell_on] || "#94a3b8", fontWeight: 600 }}>{s.sell_on}</span></td>
+                  <td style={{ ...S.td, color: "#64748b" }}>${fmtP(s.sell_price)}</td>
+                  <td style={{ ...S.td, color: "#64748b" }}>{s.gross_spread.toFixed(3)}%</td>
+                  <td style={{ ...S.td, color: nc, fontWeight: 700 }}>{s.net_spread >= 0 ? "+" : ""}{s.net_spread.toFixed(3)}%</td>
+                  <td style={{ ...S.td, color: "#334155" }}>{s.exchanges}</td>
+                  <td style={S.td}>
+                    <button onClick={() => onBlock(s.symbol)} style={{
+                      background: "none", border: "none", cursor: "pointer", fontSize: 11,
+                      opacity: blocked.includes(s.symbol) ? 0.2 : 0.5, color: "#ef4444",
+                      transition: "opacity 0.2s", display: "flex", alignItems: "center", gap: 3,
+                      fontFamily: "'JetBrains Mono',monospace", fontWeight: 600,
+                    }}>&times; block</button>
+                  </td>
+                </tr>
               );
             })}
           </tbody>

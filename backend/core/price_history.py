@@ -10,8 +10,8 @@ import time
 from collections import defaultdict
 
 
-# Max 1m candles to keep per symbol×exchange (2 hours)
-MAX_CANDLES = 120
+# Max 1m candles to keep per symbol×exchange (4 hours)
+MAX_CANDLES = 240
 
 
 class PriceHistory:
@@ -91,7 +91,7 @@ class PriceHistory:
     @staticmethod
     def _aggregate(candles: list[dict], tf: str) -> list[dict]:
         """Aggregate 1m candles into larger timeframes."""
-        seconds = {"5m": 300, "15m": 900, "1h": 3600}.get(tf, 60)
+        seconds = {"5m": 300, "15m": 900, "30m": 1800, "1h": 3600, "4h": 14400}.get(tf, 60)
         if seconds == 60:
             return candles
 

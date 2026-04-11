@@ -12,7 +12,7 @@ jobs:
     steps:
       - name: Deploy on server
         run: |
-          cd /root/Flasharb/backend
+          cd /home/githubrunner/Flasharb/backend
 
           git pull origin main
 
@@ -22,7 +22,7 @@ jobs:
 
           docker run -d \
             --name flasharb-backend \
-            --env-file /root/Flasharb/backend/.env \
+            --env-file /home/githubrunner/Flasharb/backend/.env \
             -p 127.0.0.1:8000:8000 \
             --restart unless-stopped \
             flasharb-arb-scanner \

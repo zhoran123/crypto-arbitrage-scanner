@@ -12,18 +12,9 @@ jobs:
     steps:
       - name: Deploy on server
         run: |
-          cd /home/githubrunner/Flasharb/backend
+          cd /home/githubrunner/Flasharb
 
           git pull origin main
 
-          docker build -t flasharb-arb-scanner .
-
-          docker rm -f flasharb-backend || true
-
-          docker run -d \
-            --name flasharb-backend \
-            --env-file /home/githubrunner/Flasharb/backend/.env \
-            -p 127.0.0.1:8000:8000 \
-            --restart unless-stopped \
-            flasharb-arb-scanner \
-            uvicorn main:app --host 0.0.0.0 --port 8000
+          docker compose down
+          docker compose up -d --build

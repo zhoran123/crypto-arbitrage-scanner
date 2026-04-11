@@ -1,0 +1,29 @@
+name: Deploy
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Deploy on server
+        run: |
+          cd /root/Flasharb/backend
+
+          git pull origin main
+
+          docker build -t flasharb-arb-scanner .
+
+          docker rm -f flasharb-backend || true
+
+          docker run -d \
+            --name flasharb-backend \
+            --env-file /root/Flasharb/backend/.env \
+            -p 127.0.0.1:8000:8000 \
+            --restart unless-stopped \
+            flasharb-arb-scanner \
+            uvicorn main:app --host 0.0.0.0 --port 8000

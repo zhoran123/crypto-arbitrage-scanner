@@ -17,22 +17,11 @@ function MiniChart({ symbol, tf, height }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef({});
+  const initDone = useRef(false);
   const [hidden, setHidden] = useState({});
   const [exchanges, setExchanges] = useState([]);
 
-  const fetchData = useCallback(async () => {
-    try {
-      const r = await fetch(`${API}/price-history?symbol=${symbol}&tf=${tf}`);
-      const data = await r.json();
-      const exchs = Object.keys(data).filter(ex => data[ex]?.length > 0);
-      setExchanges(exchs);
-      return data;
-    } catch {
-      return null;
-    }
-  }, [symbol, tf]);
-
-  // Create chart once
+  // Create chart once on mount
   useEffect(() => {
     if (!containerRef.current) return;
     const chart = createChart(containerRef.current, {
@@ -43,6 +32,7 @@ function MiniChart({ symbol, tf, height }) {
         textColor: "#475569",
         fontFamily: "'JetBrains Mono', monospace",
         fontSize: 10,
+        attributionLogo: false,
       },
       grid: {
         vertLines: { color: "rgba(14,165,233,0.04)" },
@@ -71,13 +61,16 @@ function MiniChart({ symbol, tf, height }) {
         borderColor: "rgba(14,165,233,0.08)",
         timeVisible: true,
         secondsVisible: false,
-        fixLeftEdge: true,
-        fixRightEdge: true,
       },
-      handleScroll: false,
-      handleScale: false,
+      handleScroll: true,
+      handleScale: true,
     });
     chartRef.current = chart;
+
+    // Hide TradingView watermark via CSS
+    const el = containerRef.current;
+    const tvLogos = el.querySelectorAll("a[href*='tradingview'], div[class*='attribution']");
+    tvLogos.forEach(l => { l.style.display = "none"; });
 
     const ro = new ResizeObserver(() => {
       if (containerRef.current) {
@@ -91,55 +84,81 @@ function MiniChart({ symbol, tf, height }) {
       chart.remove();
       chartRef.current = null;
       seriesRef.current = {};
+      initDone.current = false;
     };
   }, [height]);
 
-  // Fetch & update data
+  // Full data load (on mount and tf change)
   useEffect(() => {
     if (!chartRef.current) return;
     let active = true;
 
-    async function update() {
-      const data = await fetchData();
-      if (!data || !active || !chartRef.current) return;
+    async function fullLoad() {
+      try {
+        const r = await fetch(`${API}/price-history?symbol=${symbol}&tf=${tf}`);
+        const data = await r.json();
+        if (!active || !chartRef.current) return;
 
-      const chart = chartRef.current;
+        const chart = chartRef.current;
+        const exchs = Object.keys(data).filter(ex => data[ex]?.length > 0);
+        setExchanges(exchs);
 
-      // Remove old series
-      Object.values(seriesRef.current).forEach(s => {
-        try { chart.removeSeries(s); } catch {}
-      });
-      seriesRef.current = {};
-
-      // Add new series
-      Object.keys(data).forEach(ex => {
-        if (!data[ex]?.length) return;
-        const series = chart.addSeries(LineSeries, {
-          color: EX_COL[ex] || "#94a3b8",
-          lineWidth: 1.5,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerRadius: 3,
-          crosshairMarkerBorderColor: EX_COL[ex] || "#94a3b8",
-          crosshairMarkerBackgroundColor: "#08090e",
+        // Remove old series
+        Object.values(seriesRef.current).forEach(s => {
+          try { chart.removeSeries(s); } catch {}
         });
-        const points = data[ex].map(c => ({
-          time: c.t,
-          value: c.c,
-        }));
-        series.setData(points);
-        if (hidden[ex]) series.applyOptions({ visible: false });
-        seriesRef.current[ex] = series;
-      });
+        seriesRef.current = {};
 
-      chart.timeScale().fitContent();
+        // Create series for each exchange
+        exchs.forEach(ex => {
+          const series = chart.addSeries(LineSeries, {
+            color: EX_COL[ex] || "#94a3b8",
+            lineWidth: 1.5,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerRadius: 3,
+            crosshairMarkerBorderColor: EX_COL[ex] || "#94a3b8",
+            crosshairMarkerBackgroundColor: "#08090e",
+            visible: !hidden[ex],
+          });
+          const points = data[ex].map(c => ({ time: c.t, value: c.c }));
+          series.setData(points);
+          seriesRef.current[ex] = series;
+        });
+
+        chart.timeScale().fitContent();
+        initDone.current = true;
+      } catch {}
     }
 
-    update();
-    const interval = tf === "1m" ? 10000 : 30000;
-    const id = setInterval(update, interval);
+    fullLoad();
+    return () => { active = false; };
+  }, [symbol, tf]); // hidden is intentionally excluded to avoid re-creating series on toggle
+
+  // Live update every 5 seconds (only update last point, no re-create)
+  useEffect(() => {
+    if (!chartRef.current) return;
+    let active = true;
+
+    async function liveUpdate() {
+      if (!initDone.current || !active) return;
+      try {
+        const r = await fetch(`${API}/price-history/live?symbol=${symbol}`);
+        const live = await r.json();
+        if (!active) return;
+
+        Object.entries(live).forEach(([ex, candle]) => {
+          const series = seriesRef.current[ex];
+          if (series && candle) {
+            series.update({ time: candle.t, value: candle.c });
+          }
+        });
+      } catch {}
+    }
+
+    const id = setInterval(liveUpdate, 5000);
     return () => { active = false; clearInterval(id); };
-  }, [tf, fetchData, hidden]);
+  }, [symbol]);
 
   // Toggle visibility without re-fetch
   const toggleExch = ex => {
@@ -153,7 +172,6 @@ function MiniChart({ symbol, tf, height }) {
 
   return (
     <div style={CS.chartCard}>
-      {/* Header */}
       <div style={CS.chartHeader}>
         <span style={CS.chartSymbol}>
           {symbol.replace("USDT", "")}
@@ -161,7 +179,6 @@ function MiniChart({ symbol, tf, height }) {
         </span>
       </div>
 
-      {/* Exchange toggles */}
       {exchanges.length > 0 && (
         <div style={CS.exchRow}>
           {exchanges.map(ex => (
@@ -178,7 +195,6 @@ function MiniChart({ symbol, tf, height }) {
         </div>
       )}
 
-      {/* Chart container */}
       <div ref={containerRef} style={{ width: "100%", flex: 1 }} />
 
       {exchanges.length === 0 && (
@@ -201,12 +217,10 @@ export default function ChartsTab({ spreads }) {
   const safePage = Math.min(page, totalPages - 1);
   const pageSymbols = symbols.slice(safePage * PER_PAGE, safePage * PER_PAGE + PER_PAGE);
 
-  // Reset page on search change
   useEffect(() => { setPage(0); }, [search]);
 
   return (
     <div>
-      {/* Controls: search + timeframes + pagination */}
       <div style={CS.controls}>
         <div style={CS.searchBox}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#334155" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 8, flexShrink: 0 }}>
@@ -231,7 +245,6 @@ export default function ChartsTab({ spreads }) {
         </div>
       </div>
 
-      {/* Chart grid */}
       {pageSymbols.length === 0 ? (
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: 300, color: "#475569", fontSize: 13 }}>
           {search ? "No matches" : "No spread data yet"}
@@ -244,7 +257,6 @@ export default function ChartsTab({ spreads }) {
         </div>
       )}
 
-      {/* Pagination */}
       {totalPages > 1 && (
         <div style={CS.pagination}>
           <button

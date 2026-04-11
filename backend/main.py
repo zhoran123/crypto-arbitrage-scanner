@@ -28,7 +28,7 @@ from core.signal_engine import SignalEngine
 from core.blacklist import Blacklist
 from core.signal_history import SignalHistory
 from core.health import HealthMonitor
-from core.price_history import PriceHistory
+from core.price_store import PriceStore
 from alerts.telegram import TelegramAlerter
 
 from connectors.binance import BinanceConnector
@@ -61,7 +61,7 @@ engine = SignalEngine()
 blacklist = Blacklist()
 history = SignalHistory()
 health = HealthMonitor()
-price_history = PriceHistory()
+price_store = PriceStore()
 
 # Telegram
 tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -145,7 +145,7 @@ def on_price_update(symbol: str, exchange: str, bid: float, ask: float):
     health.on_update(exchange, symbol)
 
     aggregator.update(symbol, exchange, bid, ask)
-    price_history.on_price(symbol, exchange, bid, ask)
+    price_store.on_price(symbol, exchange, bid, ask)
     prices = aggregator.get_prices(symbol)
     if prices:
         engine.on_price_update(symbol, prices)
@@ -318,7 +318,12 @@ async def get_health():
 async def get_price_history(symbol: str, tf: str = "1m"):
     if tf not in ("1m", "5m", "15m", "30m", "1h", "4h"):
         return {"error": "tf must be 1m, 5m, 15m, 30m, 1h, or 4h"}
-    return price_history.get_history(symbol.upper(), tf)
+    return price_store.get_history(symbol.upper(), tf)
+
+
+@app.get("/price-history/live")
+async def get_price_live(symbol: str):
+    return price_store.get_live_candles(symbol.upper())
 
 
 @app.get("/telegram/status")
@@ -354,6 +359,13 @@ async def startup():
     print("=" * 50)
 
     asyncio.create_task(signal_sender())
+
+    # Periodic flush of price candles to SQLite
+    async def flush_loop():
+        while True:
+            await asyncio.sleep(60)
+            price_store.flush()
+    asyncio.create_task(flush_loop())
 
     for exch_name in EXCHANGES:
         connector_cls = CONNECTOR_REGISTRY.get(exch_name)

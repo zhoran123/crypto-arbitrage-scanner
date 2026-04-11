@@ -80,12 +80,14 @@ export default function Dashboard() {
   useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(id); }, []);
 
   const block = async sym => {
-    await fetch(`${API}/blacklist/add`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: sym }) });
     setBL(p => [...p, sym.toUpperCase()].sort());
+    fetch(`${API}/blacklist/add`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: sym }) })
+      .catch(() => setBL(p => p.filter(s => s !== sym.toUpperCase())));
   };
   const unblock = async sym => {
-    await fetch(`${API}/blacklist/remove`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: sym }) });
     setBL(p => p.filter(s => s !== sym.toUpperCase()));
+    fetch(`${API}/blacklist/remove`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: sym }) })
+      .catch(() => setBL(p => [...p, sym.toUpperCase()].sort()));
   };
 
   const filtSig = signals.filter(s => s.net_spread_pct >= sigMin);
@@ -123,8 +125,6 @@ export default function Dashboard() {
           </div>
           {stats && (
             <div style={S.statusRight}>
-              <Chip l="Updates" v={stats.price_updates?.toLocaleString()} />
-              <Chip l="Signals" v={stats.signals_generated} accent />
               <Chip l="History" v={stats.signals_history} />
               {stats.blacklisted > 0 && <Chip l="Blocked" v={stats.blacklisted} warn />}
             </div>
@@ -352,10 +352,11 @@ function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked 
                   <td style={{ ...S.td, color: "#334155" }}>{s.exchanges}</td>
                   <td style={S.td}>
                     <button onClick={() => onBlock(s.symbol)} style={{
-                      background: "none", border: "none", cursor: "pointer", fontSize: 14,
-                      opacity: blocked.includes(s.symbol) ? 0.2 : 0.4, color: "#ef4444",
-                      transition: "opacity 0.2s",
-                    }}>&times;</button>
+                      background: "none", border: "none", cursor: "pointer", fontSize: 11,
+                      opacity: blocked.includes(s.symbol) ? 0.2 : 0.5, color: "#ef4444",
+                      transition: "opacity 0.2s", display: "flex", alignItems: "center", gap: 3,
+                      fontFamily: "'JetBrains Mono',monospace", fontWeight: 600,
+                    }}>&times; block</button>
                   </td>
                 </tr>
               );
@@ -392,7 +393,6 @@ function HealthTab({ data }) {
             </div>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
               <Metric l="Last update" v={`${h.last_update_sec}s`} h={h.last_update_sec < 10} />
-              <Metric l="Total" v={h.total_updates.toLocaleString()} />
               <Metric l="Pairs" v={h.symbols_active} />
               <Metric l="Upd/sec" v={h.updates_per_sec} h={h.updates_per_sec > 10} />
             </div>

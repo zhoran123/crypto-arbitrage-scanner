@@ -28,6 +28,7 @@ from core.signal_engine import SignalEngine
 from core.blacklist import Blacklist
 from core.signal_history import SignalHistory
 from core.health import HealthMonitor
+from core.price_history import PriceHistory
 from alerts.telegram import TelegramAlerter
 
 from connectors.binance import BinanceConnector
@@ -60,6 +61,7 @@ engine = SignalEngine()
 blacklist = Blacklist()
 history = SignalHistory()
 health = HealthMonitor()
+price_history = PriceHistory()
 
 # Telegram
 tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -143,6 +145,7 @@ def on_price_update(symbol: str, exchange: str, bid: float, ask: float):
     health.on_update(exchange, symbol)
 
     aggregator.update(symbol, exchange, bid, ask)
+    price_history.on_price(symbol, exchange, bid, ask)
     prices = aggregator.get_prices(symbol)
     if prices:
         engine.on_price_update(symbol, prices)
@@ -309,6 +312,13 @@ async def get_history_stats():
 @app.get("/health")
 async def get_health():
     return health.get_status()
+
+
+@app.get("/price-history")
+async def get_price_history(symbol: str, tf: str = "1m"):
+    if tf not in ("1m", "5m", "15m", "1h"):
+        return {"error": "tf must be 1m, 5m, 15m, or 1h"}
+    return price_history.get_history(symbol.upper(), tf)
 
 
 @app.get("/telegram/status")

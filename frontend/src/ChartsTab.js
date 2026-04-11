@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from "react";
-import { createChart, CrosshairMode, LineStyle } from "lightweight-charts";
+import { createChart, CrosshairMode, LineStyle, LineSeries } from "lightweight-charts";
 
 const _h = window.location.hostname;
 const _p = window.location.port === "3000" ? "8000" : window.location.port;
@@ -114,7 +114,7 @@ function MiniChart({ symbol, tf, height }) {
       // Add new series
       Object.keys(data).forEach(ex => {
         if (!data[ex]?.length) return;
-        const series = chart.addLineSeries({
+        const series = chart.addSeries(LineSeries, {
           color: EX_COL[ex] || "#94a3b8",
           lineWidth: 1.5,
           priceLineVisible: false,

@@ -1,0 +1,220 @@
+.charts-tab {
+  min-width: 0;
+}
+
+.charts-controls {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  margin-bottom: 16px;
+  flex-wrap: wrap;
+}
+
+.charts-search-box {
+  display: flex;
+  align-items: center;
+  background: rgba(12, 14, 24, 0.6);
+  border: 1px solid rgba(14, 165, 233, 0.06);
+  border-radius: 8px;
+  padding: 0 14px;
+  flex: 1 1 180px;
+  min-width: 160px;
+}
+
+.charts-search-icon {
+  margin-right: 8px;
+  flex-shrink: 0;
+}
+
+.charts-search-input {
+  background: none;
+  border: none;
+  color: #e2e8f0;
+  font-size: 13px;
+  font-family: inherit;
+  padding: 10px 0;
+  outline: none;
+  width: 100%;
+}
+
+.charts-search-clear {
+  background: none;
+  border: none;
+  color: #64748b;
+  cursor: pointer;
+  font-size: 14px;
+  padding: 4px;
+  line-height: 1;
+}
+
+.charts-timeframes {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+
+.charts-timeframe-btn {
+  background: rgba(14, 165, 233, 0.04);
+  border: 1px solid rgba(14, 165, 233, 0.08);
+  border-radius: 6px;
+  padding: 5px 14px;
+  cursor: pointer;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  transition: all 0.15s;
+}
+
+.charts-timeframe-btn.is-active {
+  background: rgba(14, 165, 233, 0.15);
+  border-color: rgba(14, 165, 233, 0.3);
+  color: #0ea5e9;
+}
+
+.charts-pairs-count {
+  font-size: 12px;
+  color: #64748b;
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
+}
+
+.charts-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.charts-card {
+  background: rgba(12, 14, 24, 0.6);
+  border: 1px solid rgba(14, 165, 233, 0.06);
+  border-radius: 10px;
+  padding: 12px 14px;
+  display: flex;
+  flex-direction: column;
+  min-height: 280px;
+}
+
+.charts-card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 6px;
+}
+
+.charts-card-symbol {
+  font-size: 14px;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.charts-card-suffix {
+  color: #334155;
+  font-size: 11px;
+  font-weight: 400;
+}
+
+.charts-exchanges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.charts-exchange-btn {
+  background: var(--exchange-bg, rgba(148, 163, 184, 0.1));
+  border: 1px solid var(--exchange-border, rgba(148, 163, 184, 0.25));
+  border-radius: 4px;
+  padding: 2px 6px;
+  cursor: pointer;
+  color: var(--exchange-color, #94a3b8);
+  font-size: 9px;
+  font-weight: 600;
+  font-family: 'JetBrains Mono', monospace;
+  transition: all 0.15s;
+}
+
+.charts-exchange-btn.is-hidden {
+  background: rgba(30, 41, 59, 0.4);
+  border-color: rgba(30, 41, 59, 0.5);
+  color: #334155;
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.charts-canvas {
+  width: 100%;
+  flex: 1;
+}
+
+.charts-no-data {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 1;
+  color: #334155;
+  font-size: 11px;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+.charts-empty {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 300px;
+  color: #475569;
+  font-size: 13px;
+}
+
+.charts-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  margin-top: 16px;
+  padding: 8px 0;
+}
+
+.charts-page-btn {
+  background: rgba(14, 165, 233, 0.06);
+  border: 1px solid rgba(14, 165, 233, 0.1);
+  border-radius: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  color: #0ea5e9;
+  display: flex;
+  align-items: center;
+  transition: all 0.15s;
+}
+
+.charts-page-btn:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
+
+.charts-page-info {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  font-family: 'JetBrains Mono', monospace;
+}
+
+@media (max-width: 1100px) {
+  .charts-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .charts-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .charts-controls {
+    align-items: stretch;
+  }
+
+  .charts-pairs-count {
+    width: 100%;
+  }
+}

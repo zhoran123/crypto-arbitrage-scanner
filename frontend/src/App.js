@@ -3,6 +3,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import Landing from "./Landing";
 import Dashboard from "./Dashboard";
 import Pricing from "./Pricing";
+import "./app.css";
 
 function getPage() {
   const h = window.location.hash.replace("#", "") || "/";
@@ -34,7 +35,7 @@ export default function App() {
         initial="initial"
         animate="animate"
         exit="exit"
-        style={{ minHeight: "100vh" }}
+        className="app-page"
       >
         {page === "dashboard" && <Dashboard />}
         {page === "pricing" && <Pricing />}

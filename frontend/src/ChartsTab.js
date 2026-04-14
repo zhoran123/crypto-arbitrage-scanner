@@ -21,6 +21,53 @@ function MiniChart({ symbol, tf, height }) {
   const initDone = useRef(false);
   const [hidden, setHidden] = useState({});
   const [exchanges, setExchanges] = useState([]);
+  const hiddenRef = useRef(hidden);
+
+  useEffect(() => {
+    hiddenRef.current = hidden;
+  }, [hidden]);
+
+  const removeAllSeries = chart => {
+    Object.values(seriesRef.current).forEach(series => {
+      try { chart.removeSeries(series); } catch {}
+    });
+    seriesRef.current = {};
+  };
+
+  const addSeries = (chart, ex, points = []) => {
+    const series = chart.addSeries(LineSeries, {
+      color: EX_COL[ex] || "#94a3b8",
+      lineWidth: 1.5,
+      priceLineVisible: false,
+      lastValueVisible: false,
+      crosshairMarkerRadius: 3,
+      crosshairMarkerBorderColor: EX_COL[ex] || "#94a3b8",
+      crosshairMarkerBackgroundColor: "#08090e",
+      visible: !hiddenRef.current[ex],
+    });
+    if (points.length) {
+      series.setData(points);
+    }
+    seriesRef.current[ex] = series;
+    return series;
+  };
+
+  const applyHistoryData = data => {
+    if (!chartRef.current) return 0;
+    const chart = chartRef.current;
+    const exchs = Object.keys(data).filter(ex => data[ex]?.length > 0);
+
+    removeAllSeries(chart);
+    exchs.forEach(ex => {
+      addSeries(chart, ex, data[ex].map(c => ({ time: c.t, value: c.c })));
+    });
+
+    setExchanges(exchs);
+    if (exchs.length > 0) {
+      chart.timeScale().fitContent();
+    }
+    return exchs.length;
+  };
 
   // Create chart once on mount
   useEffect(() => {
@@ -99,42 +146,25 @@ function MiniChart({ symbol, tf, height }) {
         const r = await fetch(`${API}/price-history?symbol=${symbol}&tf=${tf}`);
         const data = await r.json();
         if (!active || !chartRef.current) return;
-
-        const chart = chartRef.current;
-        const exchs = Object.keys(data).filter(ex => data[ex]?.length > 0);
-        setExchanges(exchs);
-
-        // Remove old series
-        Object.values(seriesRef.current).forEach(s => {
-          try { chart.removeSeries(s); } catch {}
-        });
-        seriesRef.current = {};
-
-        // Create series for each exchange
-        exchs.forEach(ex => {
-          const series = chart.addSeries(LineSeries, {
-            color: EX_COL[ex] || "#94a3b8",
-            lineWidth: 1.5,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerRadius: 3,
-            crosshairMarkerBorderColor: EX_COL[ex] || "#94a3b8",
-            crosshairMarkerBackgroundColor: "#08090e",
-            visible: !hidden[ex],
-          });
-          const points = data[ex].map(c => ({ time: c.t, value: c.c }));
-          series.setData(points);
-          seriesRef.current[ex] = series;
-        });
-
-        chart.timeScale().fitContent();
+        applyHistoryData(data);
+        // Mark initialized even when history is empty so live updates and retries can recover.
         initDone.current = true;
       } catch {}
     }
 
     fullLoad();
-    return () => { active = false; };
-  }, [symbol, tf]); // hidden is intentionally excluded to avoid re-creating series on toggle
+
+    const retryId = setInterval(() => {
+      if (Object.keys(seriesRef.current).length === 0) {
+        fullLoad();
+      }
+    }, 15000);
+
+    return () => {
+      active = false;
+      clearInterval(retryId);
+    };
+  }, [symbol, tf]);
 
   // Live update every 5 seconds (only update last point, no re-create)
   useEffect(() => {
@@ -149,8 +179,16 @@ function MiniChart({ symbol, tf, height }) {
         if (!active) return;
 
         Object.entries(live).forEach(([ex, candle]) => {
-          const series = seriesRef.current[ex];
-          if (series && candle) {
+          if (!candle) return;
+
+          let series = seriesRef.current[ex];
+          if (!series && chartRef.current) {
+            series = addSeries(chartRef.current, ex, [{ time: candle.t, value: candle.c }]);
+            setExchanges(prev => (prev.includes(ex) ? prev : [...prev, ex]));
+            chartRef.current.timeScale().fitContent();
+          }
+
+          if (series) {
             series.update({ time: candle.t, value: candle.c });
           }
         });

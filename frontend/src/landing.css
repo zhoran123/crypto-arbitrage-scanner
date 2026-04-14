@@ -452,3 +452,11 @@
   color: #1e293b;
   margin-top: 8px;
 }
+@media (max-width: 768px) {
+  .feat-title{
+    font-size: 10px;
+  }
+  .feat-desk{
+    font-size: 8px;
+  }
+}

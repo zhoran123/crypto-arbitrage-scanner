@@ -249,6 +249,23 @@ def _compute_spreads() -> list:
     return result
 
 
+def _snapshot_symbol_candles(symbol: str) -> dict:
+    """
+    Build synthetic current candles from aggregator mid-prices.
+    Used as a fallback when PriceStore has not accumulated history yet.
+    """
+    snapshot = {}
+    ts = int(time.time() // 60) * 60
+    for exchange, data in aggregator.prices.get(symbol.upper(), {}).items():
+        bid = data.get("bid", 0)
+        ask = data.get("ask", 0)
+        if bid <= 0 or ask <= 0:
+            continue
+        mid = (bid + ask) / 2
+        snapshot[exchange] = {"t": ts, "o": mid, "h": mid, "l": mid, "c": mid}
+    return snapshot
+
+
 @app.get("/spreads")
 async def get_spreads():
     global _spreads_cache, _spreads_cache_ts
@@ -318,12 +335,21 @@ async def get_health():
 async def get_price_history(symbol: str, tf: str = "1m"):
     if tf not in ("1m", "5m", "15m", "30m", "1h", "4h"):
         return {"error": "tf must be 1m, 5m, 15m, 30m, 1h, or 4h"}
-    return price_store.get_history(symbol.upper(), tf)
+    result = price_store.get_history(symbol.upper(), tf)
+    fallback = _snapshot_symbol_candles(symbol)
+    for exchange, candle in fallback.items():
+        if not result.get(exchange):
+            result[exchange] = [candle]
+    return result
 
 
 @app.get("/price-history/live")
 async def get_price_live(symbol: str):
-    return price_store.get_live_candles(symbol.upper())
+    result = price_store.get_live_candles(symbol.upper())
+    fallback = _snapshot_symbol_candles(symbol)
+    for exchange, candle in fallback.items():
+        result.setdefault(exchange, candle)
+    return result
 
 
 @app.get("/telegram/status")

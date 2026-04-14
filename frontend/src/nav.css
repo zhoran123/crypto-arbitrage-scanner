@@ -112,6 +112,7 @@
   transition: all 0.3s;
   letter-spacing: -0.2px;
   box-shadow: 0 0 16px rgba(14, 165, 233, 0.12), 0 2px 8px rgba(0, 0, 0, 0.2);
+  white-space: nowrap;
 }
 
 .nav-cta:hover {
@@ -119,5 +120,7 @@
   transform: translateY(-1px);
 }
 @media (max-width: 768px) {
-  font-sixe: 8px;
+  .nav-cta {
+    font-size: 8px;
+  }
 }

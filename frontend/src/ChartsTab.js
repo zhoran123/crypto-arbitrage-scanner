@@ -2,9 +2,9 @@ import React, { useState, useEffect, useRef } from "react";
 import { createChart, CrosshairMode, LineStyle, LineSeries } from "lightweight-charts";
 import "./chartstab.css";
 
-const _h = window.location.hostname;
-const _p = window.location.port === "3000" ? "8000" : window.location.port;
-const API = `${window.location.protocol}//${_h}:${_p}`;
+const API = window.location.port === "3000"
+  ? `${window.location.protocol}//${window.location.hostname}:8000`
+  : window.location.origin;
 
 const EX_COL = {
   binance: "#F0B90B", bybit: "#F7A600", mexc: "#00B897", bingx: "#60a5fa",

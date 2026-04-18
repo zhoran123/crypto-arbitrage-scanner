@@ -4,11 +4,13 @@ import Nav from "./Nav";
 import ChartsTab from "./ChartsTab";
 import "./dashboard.css";
 
-const _h = window.location.hostname;
-const _p = window.location.port === "3000" ? "8000" : window.location.port;
-const _pr = window.location.protocol === "https:" ? "wss:" : "ws:";
-const WS_URL = `${_pr}//${_h}:${_p}/ws`;
-const API = `${window.location.protocol}//${_h}:${_p}`;
+const IS_FRONTEND_DEV = window.location.port === "3000";
+const API = IS_FRONTEND_DEV
+  ? `${window.location.protocol}//${window.location.hostname}:8000`
+  : window.location.origin;
+const WS_URL = IS_FRONTEND_DEV
+  ? `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.hostname}:8000/ws`
+  : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
 const EX_COL = {
   binance: "#F0B90B", bybit: "#F7A600", mexc: "#00B897", bingx: "#60a5fa",

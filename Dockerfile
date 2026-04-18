@@ -1,8 +1,8 @@
 # === Стадия 1: сборка React ===
 FROM node:20-slim AS frontend-build
 WORKDIR /app
-COPY frontend/package.json ./
-RUN npm install
+COPY frontend/package.json frontend/package-lock.json ./
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 

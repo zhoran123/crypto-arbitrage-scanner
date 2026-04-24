@@ -71,6 +71,17 @@ class TelegramAlerter:
             print(f"[Telegram] получено: {self._received_count}, отправлено: {self._sent_count}, "
                   f"отфильтровано: {self._filtered_count}, ошибок: {self._error_count}")
 
+    def on_convergence(self, payload: dict):
+        """Алерт о схождении спреда — отдельная очередь, без троттлинга сигналов."""
+        symbol = payload.get("symbol", "")
+        now = time.time()
+        key = f"{symbol}:convergence"
+        last = self._last_sent.get(key, 0)
+        if now - last < self.cooldown:
+            return
+        self._last_sent[key] = now
+        self._queue.put((payload, "convergence"))
+
     def _sender_loop(self):
         """Фоновый цикл отправки сообщений."""
         print("[Telegram] sender thread запущен")
@@ -87,7 +98,10 @@ class TelegramAlerter:
 
     def _send_with_retry(self, signal: dict, level: str, retries: int = 2):
         """Отправка с ретраями."""
-        text = self._format_message(signal, level)
+        if level == "convergence":
+            text = self._format_convergence(signal)
+        else:
+            text = self._format_message(signal, level)
         for attempt in range(1, retries + 1):
             try:
                 resp = requests.post(
@@ -103,8 +117,13 @@ class TelegramAlerter:
                 if resp.status_code == 200:
                     self._sent_count += 1
                     sym = signal.get("symbol", "?")
-                    net = signal.get("net_spread_pct", 0)
-                    print(f"[Telegram] отправлен: {sym} net={net:+.3f}% [{level}]")
+                    if level == "convergence":
+                        peak = signal.get("peak_spread_pct", 0)
+                        cur = signal.get("current_spread_pct", 0)
+                        print(f"[Telegram] отправлен: {sym} convergence peak={peak:.2f}% → {cur:.2f}%")
+                    else:
+                        net = signal.get("net_spread_pct", 0)
+                        print(f"[Telegram] отправлен: {sym} net={net:+.3f}% [{level}]")
                     return
                 elif resp.status_code == 429:
                     # Rate limited — ждём и ретраим
@@ -166,6 +185,30 @@ class TelegramAlerter:
         elif level == "high":
             lines.extend(["", "\u26a1 <i>High priority signal</i>"])
 
+        return "\n".join(lines)
+
+    @staticmethod
+    def _format_convergence(p: dict) -> str:
+        symbol = p.get("symbol", "???")
+        buy_on = p.get("buy_on", "?").upper()
+        sell_on = p.get("sell_on", "?").upper()
+        peak = p.get("peak_spread_pct", 0)
+        cur = p.get("current_spread_pct", 0)
+        age = p.get("peak_age_sec", 0)
+        age_str = f"{age}s" if age < 60 else f"{age // 60}m {age % 60}s"
+        drop = peak - cur
+
+        lines = [
+            f"\U0001f501 <b>CONVERGED \u2014 {symbol}</b>",
+            "\u2500" * 24,
+            "",
+            f"Pair: <b>{buy_on}</b> \u2194 <b>{sell_on}</b>",
+            f"Peak:    <b>{peak:.2f}%</b>  ({age_str} ago)",
+            f"Current: <b>{cur:.2f}%</b>",
+            f"Drop:    <b>\u2212{drop:.2f}%</b>",
+            "",
+            "<i>Spread has collapsed \u2014 opportunity likely closed.</i>",
+        ]
         return "\n".join(lines)
 
     @property

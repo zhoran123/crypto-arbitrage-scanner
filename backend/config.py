@@ -1,6 +1,7 @@
 EXCHANGES = [
     "binance", "bybit",
     "mexc", "bingx", "gate", "bitget", "okx", "kucoin",
+    "dex",
 ]
 
 # Символы загружаются лениво — НЕ при импорте модуля.
@@ -39,4 +40,5 @@ FEES = {
     "bitget":  0.051,
     "okx":     0.05,
     "kucoin":  0.06,
+    "dex":     0.3,   # DEX swap fee ~0.05-0.3% + gas/slippage envelope
 }

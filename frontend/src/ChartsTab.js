@@ -9,12 +9,20 @@ const API = `${window.location.protocol}//${_h}:${_p}`;
 const EX_COL = {
   binance: "#F0B90B", bybit: "#F7A600", mexc: "#00B897", bingx: "#60a5fa",
   gate: "#60a5fa", bitget: "#00c9a7", okx: "#a78bfa", kucoin: "#23AF91",
+  dex: "#f472b6",
 };
 
 const TFS = ["1m", "5m", "15m", "30m", "1h", "4h"];
 const PER_PAGE = 6;
 
-function MiniChart({ symbol, tf, height }) {
+function fmtUSD(v) {
+  if (!v || v <= 0) return null;
+  if (v >= 1e6) return "$" + (v / 1e6).toFixed(1) + "M";
+  if (v >= 1e3) return "$" + (v / 1e3).toFixed(1) + "k";
+  return "$" + Math.round(v);
+}
+
+function MiniChart({ symbol, tf, height, maxSize, isFav, onFav }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef({});
@@ -209,13 +217,27 @@ function MiniChart({ symbol, tf, height }) {
     });
   };
 
+  const sizeLabel = fmtUSD(maxSize);
+
   return (
     <div className="charts-card">
       <div className="charts-card-header">
+        <button
+          onClick={() => onFav && onFav(symbol)}
+          className={`charts-fav-btn${isFav ? " is-active" : ""}`}
+          title={isFav ? "Unpin" : "Pin to top"}
+        >
+          {isFav ? "★" : "☆"}
+        </button>
         <span className="charts-card-symbol">
           {symbol.replace("USDT", "")}
           <span className="charts-card-suffix">/USDT</span>
         </span>
+        {sizeLabel && (
+          <span className="charts-max-size" title="Max USD notional with <0.2% slippage per leg">
+            Max {sizeLabel}
+          </span>
+        )}
       </div>
 
       {exchanges.length > 0 && (
@@ -246,14 +268,23 @@ function MiniChart({ symbol, tf, height }) {
   );
 }
 
-export default function ChartsTab({ spreads }) {
+export default function ChartsTab({ spreads, favs = [], onFav }) {
   const [tf, setTf] = useState("1m");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
 
+  const favSet = new Set(favs);
+  const sizeMap = {};
+  spreads.forEach(s => { sizeMap[s.symbol] = s.max_size_usd || 0; });
+
   const symbols = spreads
     .map(s => s.symbol)
-    .filter(s => !search || s.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, "")));
+    .filter(s => !search || s.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, "")))
+    .sort((a, b) => {
+      const af = favSet.has(a) ? 1 : 0;
+      const bf = favSet.has(b) ? 1 : 0;
+      return bf - af;
+    });
 
   const totalPages = Math.max(1, Math.ceil(symbols.length / PER_PAGE));
   const safePage = Math.min(page, totalPages - 1);
@@ -300,7 +331,15 @@ export default function ChartsTab({ spreads }) {
       ) : (
         <div className="charts-grid">
           {pageSymbols.map(sym => (
-            <MiniChart key={sym + tf} symbol={sym} tf={tf} height={280} />
+            <MiniChart
+              key={sym + tf}
+              symbol={sym}
+              tf={tf}
+              height={280}
+              maxSize={sizeMap[sym]}
+              isFav={favSet.has(sym)}
+              onFav={onFav}
+            />
           ))}
         </div>
       )}

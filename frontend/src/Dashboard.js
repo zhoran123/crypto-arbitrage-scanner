@@ -13,9 +13,11 @@ const API = `${window.location.protocol}//${_h}:${_p}`;
 const EX_COL = {
   binance: "#F0B90B", bybit: "#F7A600", mexc: "#00B897", bingx: "#60a5fa",
   gate: "#60a5fa", bitget: "#00c9a7", okx: "#a78bfa", kucoin: "#23AF91",
+  dex: "#f472b6",
 };
 
 function fmtP(p) { return p >= 1000 ? p.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : p >= 1 ? p.toFixed(4) : p.toFixed(6); }
+function fmtUSD(v) { if (!v || v <= 0) return "—"; if (v >= 1e6) return "$" + (v / 1e6).toFixed(1) + "M"; if (v >= 1e3) return "$" + (v / 1e3).toFixed(1) + "k"; return "$" + Math.round(v); }
 function timeAgo(iso) { const d = (Date.now() - new Date(iso).getTime()) / 1000; return d < 5 ? "now" : d < 60 ? Math.floor(d) + "s" : d < 3600 ? Math.floor(d / 60) + "m" : Math.floor(d / 3600) + "h"; }
 function qCol(q) { return q >= 70 ? "#0ea5e9" : q >= 40 ? "#0284c7" : "#1e3a5f"; }
 function spreadCol(n) { return n > 0.3 ? "#10b981" : n > 0 ? "#6ee7b7" : n > -0.1 ? "#64748b" : "#475569"; }
@@ -32,9 +34,22 @@ export default function Dashboard() {
   const [tab, setTab] = useState("spreads");
   const [search, setSearch] = useState("");
   const [tblMin, setTblMin] = useState(-1);
-  const [sigMin, setSigMin] = useState(0);
-  const [showF, setShowF] = useState(false);
+  const [sigMin, setSigMin] = useState(3);
+  const [showF, setShowF] = useState(true);
+  const [favs, setFavs] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("fa_favs") || "[]"); }
+    catch { return []; }
+  });
   const wsRef = useRef(null); const rcRef = useRef(null);
+
+  const toggleFav = useCallback(sym => {
+    const s = sym.toUpperCase();
+    setFavs(prev => {
+      const next = prev.includes(s) ? prev.filter(x => x !== s) : [s, ...prev];
+      try { localStorage.setItem("fa_favs", JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   const connectWs = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState <= 1) return;
@@ -156,7 +171,7 @@ export default function Dashboard() {
         {tab === "signals" && showF && (
           <motion.div className="filter-bar" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}>
             <div className="filter-inner">
-              <Slider l="MIN NET SPREAD" v={sigMin} set={setSigMin} min={0} max={5} step={0.1} fmt={v => v.toFixed(1) + "%"} />
+              <Slider l="MIN NET SPREAD" v={sigMin} set={setSigMin} min={0} max={10} step={0.1} fmt={v => v.toFixed(1) + "%"} />
             </div>
           </motion.div>
         )}
@@ -164,8 +179,8 @@ export default function Dashboard() {
       <main className="dash-main">
         <AnimatePresence mode="wait">
           <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.2 }}>
-            {tab === "spreads" && <SpreadsTab spreads={spreads} search={search} setSearch={setSearch} min={tblMin} setMin={setTblMin} onBlock={block} blocked={blacklist} />}
-            {tab === "charts" && <ChartsTab spreads={spreads} />}
+            {tab === "spreads" && <SpreadsTab spreads={spreads} search={search} setSearch={setSearch} min={tblMin} setMin={setTblMin} onBlock={block} blocked={blacklist} favs={favs} onFav={toggleFav} />}
+            {tab === "charts" && <ChartsTab spreads={spreads} favs={favs} onFav={toggleFav} />}
             {tab === "signals" && (
               filtSig.length === 0
                 ? <Empty t="Waiting for signals..." d={`${stats?.price_updates?.toLocaleString() || 0} updates processed. Signals appear when spreads exceed thresholds.`} />
@@ -264,11 +279,19 @@ function Metric({ l, v, h }) {
   );
 }
 
-function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked }) {
-  const f = spreads.filter(s => {
-    if (search && !s.symbol.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, ""))) return false;
-    return s.net_spread >= min;
-  });
+function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked, favs, onFav }) {
+  const favSet = new Set(favs);
+  const f = spreads
+    .filter(s => {
+      if (search && !s.symbol.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, ""))) return false;
+      return s.net_spread >= min;
+    })
+    .sort((a, b) => {
+      const af = favSet.has(a.symbol) ? 1 : 0;
+      const bf = favSet.has(b.symbol) ? 1 : 0;
+      if (af !== bf) return bf - af;
+      return b.net_spread - a.net_spread;
+    });
   return (
     <div>
       <div className="spreads-controls">
@@ -288,19 +311,31 @@ function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked 
         <table className="tbl">
           <thead>
             <tr>
+              <th className="th th--narrow"></th>
               <th className="th th--narrow">#</th>
               <th className="th th--left">Symbol</th>
               <th className="th">Buy</th><th className="th">Price</th>
               <th className="th">Sell</th><th className="th">Price</th>
               <th className="th">Gross</th><th className="th">Net</th>
+              <th className="th">Max Size</th>
               <th className="th">Exch</th><th className="th th--narrow"></th>
             </tr>
           </thead>
           <tbody>
             {f.map((s, i) => {
               const nc = spreadCol(s.net_spread);
+              const isFav = favSet.has(s.symbol);
               return (
                 <tr key={s.symbol} className={i % 2 === 0 ? "tbl-row--even" : "tbl-row--odd"}>
+                  <td className="td">
+                    <button
+                      onClick={() => onFav(s.symbol)}
+                      className={`fav-btn${isFav ? " fav-btn--active" : ""}`}
+                      title={isFav ? "Unpin" : "Pin to top"}
+                    >
+                      {isFav ? "★" : "☆"}
+                    </button>
+                  </td>
                   <td className="td td--muted">{i + 1}</td>
                   <td className="td td--left">
                     <span className="tbl-symbol">{s.symbol.replace("USDT", "")}</span>
@@ -312,6 +347,7 @@ function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked 
                   <td className="td td--price">${fmtP(s.sell_price)}</td>
                   <td className="td td--price">{s.gross_spread.toFixed(3)}%</td>
                   <td className="td td--emphasis" style={{ color: nc }}>{s.net_spread >= 0 ? "+" : ""}{s.net_spread.toFixed(3)}%</td>
+                  <td className="td td--price" title="Max USD notional with <0.2% slippage per leg">{fmtUSD(s.max_size_usd)}</td>
                   <td className="td td--exchanges">{s.exchanges}</td>
                   <td className="td">
                     <button

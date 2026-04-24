@@ -20,11 +20,13 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 16px;
 }
 .status-left {
   display: flex;
   align-items: center;
   gap: 8px;
+  flex-wrap: wrap;
 }
 .status-right {
   display: flex;
@@ -61,6 +63,52 @@
 }
 .status-text--disconnected {
   color: #ef4444;
+}
+
+.exchange-toggles {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  margin-left: 10px;
+}
+
+.exchange-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 24px;
+  padding: 3px 7px;
+  border-radius: 6px;
+  border: 1px solid var(--exchange-border, rgba(148, 163, 184, 0.25));
+  background: var(--exchange-bg, rgba(148, 163, 184, 0.08));
+  color: var(--exchange-color, #94a3b8);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.4px;
+  font-family: 'JetBrains Mono', monospace;
+  cursor: pointer;
+  transition: opacity 0.15s, background 0.15s, border-color 0.15s;
+}
+
+.exchange-toggle-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--exchange-color, #94a3b8);
+  box-shadow: 0 0 8px var(--exchange-color, #94a3b8);
+}
+
+.exchange-toggle--off {
+  color: #334155;
+  background: rgba(15, 23, 42, 0.6);
+  border-color: rgba(51, 65, 85, 0.55);
+  opacity: 0.55;
+}
+
+.exchange-toggle--off .exchange-toggle-dot {
+  background: #334155;
+  box-shadow: none;
 }
 
 /* ── Tab bar ── */
@@ -255,6 +303,15 @@
   font-family: 'JetBrains Mono', monospace;
   color: var(--accent-color, #0ea5e9);
   background: var(--accent-bg, rgba(14, 165, 233, 0.08));
+}
+.sig-fill {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 3px 9px;
+  border-radius: 6px;
+  border: 1px solid rgba(16, 185, 129, 0.25);
+  font-family: 'JetBrains Mono', monospace;
+  white-space: nowrap;
 }
 .sig-time {
   font-size: 11px;
@@ -463,6 +520,9 @@
 .td--quality {
   font-weight: 700;
 }
+.td--fill {
+  font-weight: 800;
+}
 .td--time {
   color: #475569;
   font-size: 11px;
@@ -620,4 +680,33 @@
   font-size: 10px;
   color: #334155;
   font-weight: 400;
+}
+
+@media (max-width: 760px) {
+  .status-inner {
+    align-items: flex-start;
+    flex-direction: column;
+    padding: 10px 20px;
+  }
+
+  .status-right {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .exchange-toggles {
+    width: 100%;
+    margin-left: 0;
+    margin-top: 4px;
+  }
+
+  .sig-header,
+  .sig-meta {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .sig-footer {
+    flex-wrap: wrap;
+  }
 }

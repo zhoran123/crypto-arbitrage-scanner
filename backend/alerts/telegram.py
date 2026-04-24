@@ -154,6 +154,7 @@ class TelegramAlerter:
         net = s.get("net_spread_pct", 0)
         z = s.get("z_score", 0)
         quality = s.get("quality", 0)
+        fill_prob = s.get("fill_prob_pct")
 
         # Заголовок по уровню
         if level == "critical":
@@ -179,6 +180,9 @@ class TelegramAlerter:
             f"\U0001f4b5 Net: <b>{net:+.3f}%</b>",
             f"\U0001f4ca Z-Score: {z:.1f}  |  \u2b50 Quality: {quality}/100",
         ])
+
+        if fill_prob is not None:
+            lines.append(f"\U0001f3af Fill: <b>{float(fill_prob):.0f}%</b>")
 
         if level == "critical":
             lines.extend(["", "\U0001f525 <b>EXCEPTIONAL OPPORTUNITY</b> \U0001f525"])

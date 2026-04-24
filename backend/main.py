@@ -1,14 +1,3 @@
-"""
-main.py — точка входа Arb-Scanner v0.4
-
-Фичи:
-- 8 бирж, 700+ монет
-- Чёрный список монет
-- Уровни Telegram-алертов (5/10/20%)
-- История сигналов
-- Мониторинг здоровья бирж
-"""
-
 import asyncio
 import json
 import os
@@ -18,39 +7,34 @@ from pathlib import Path
 from dotenv import load_dotenv
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from config import SYMBOLS, EXCHANGES, MIN_TG_SPREAD, FEES, load_symbols
-from core.aggregator import Aggregator
-from core.signal_engine import SignalEngine
-from core.blacklist import Blacklist
-from core.signal_history import SignalHistory
-from core.health import HealthMonitor
-from core.price_store import PriceStore
-from core.orderbook import OrderbookFetcher
-from core.convergence import ConvergenceTracker
 from alerts.telegram import TelegramAlerter
-
+from config import EXCHANGES, FEES, MIN_TG_SPREAD, SYMBOLS, load_symbols
 from connectors.binance import BinanceConnector
-from connectors.bybit import BybitConnector
-from connectors.mexc import MexcConnector
 from connectors.bingx import BingxConnector
-from connectors.gate import GateConnector
 from connectors.bitget import BitgetConnector
-from connectors.okx import OkxConnector
-from connectors.kucoin import KucoinConnector
+from connectors.bybit import BybitConnector
 from connectors.dex import DexConnector
+from connectors.gate import GateConnector
+from connectors.kucoin import KucoinConnector
+from connectors.mexc import MexcConnector
+from connectors.okx import OkxConnector
+from core.aggregator import Aggregator
+from core.blacklist import Blacklist
+from core.fill_probability import FillProbabilityModel
+from core.health import HealthMonitor
+from core.orderbook import OrderbookFetcher, REFRESH_INTERVAL
+from core.price_store import PriceStore
+from core.signal_engine import SignalEngine
+from core.signal_history import SignalHistory
 
-# ======================================================================
-# Инициализация
-# ======================================================================
 
 load_dotenv()
 
 app = FastAPI(title="Arb-Scanner", version="0.4.0")
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -58,7 +42,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Центральные компоненты
 aggregator = Aggregator()
 engine = SignalEngine()
 blacklist = Blacklist()
@@ -66,74 +49,95 @@ history = SignalHistory()
 health = HealthMonitor()
 price_store = PriceStore()
 orderbook = OrderbookFetcher()
-convergence = ConvergenceTracker()
+fill_probability = FillProbabilityModel()
 
-# Telegram
 tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
 tg_chat = os.getenv("TELEGRAM_CHAT_ID", "")
 tg_cooldown = float(os.getenv("TELEGRAM_COOLDOWN", "30"))
 
 telegram: TelegramAlerter | None = None
-if tg_token and tg_chat and "СЮДА" not in tg_token:
+if tg_token and tg_chat:
     telegram = TelegramAlerter(tg_token, tg_chat, cooldown=tg_cooldown)
-    print(f"[Telegram] алерты включены (cooldown={tg_cooldown}s, min_spread={MIN_TG_SPREAD}%)")
+    print(f"[Telegram] alerts enabled (cooldown={tg_cooldown}s, min_spread={MIN_TG_SPREAD}%)")
 else:
-    print("[Telegram] алерты ВЫКЛЮЧЕНЫ — заполни .env")
+    print("[Telegram] alerts disabled - fill backend/.env to enable")
 
-# WebSocket клиенты
 connected_clients: list[WebSocket] = []
 
-# Реестр коннекторов
 CONNECTOR_REGISTRY = {
     "binance": BinanceConnector,
-    "bybit":   BybitConnector,
-    "mexc":    MexcConnector,
-    "bingx":   BingxConnector,
-    "gate":    GateConnector,
-    "bitget":  BitgetConnector,
-    "okx":     OkxConnector,
-    "kucoin":  KucoinConnector,
-    "dex":     DexConnector,
+    "bybit": BybitConnector,
+    "mexc": MexcConnector,
+    "bingx": BingxConnector,
+    "gate": GateConnector,
+    "bitget": BitgetConnector,
+    "okx": OkxConnector,
+    "kucoin": KucoinConnector,
+    "dex": DexConnector,
 }
 
 STATIC_DIR = Path(__file__).parent / "static"
 
-# ======================================================================
-# Рассылка сигналов
-# ======================================================================
 
 async def broadcast_signal(signal: dict):
     if not connected_clients:
         return
+
     message = json.dumps(signal)
-    for ws in connected_clients.copy():
+    for websocket in connected_clients.copy():
         try:
-            await ws.send_text(message)
+            await websocket.send_text(message)
         except Exception:
-            if ws in connected_clients:
-                connected_clients.remove(ws)
+            if websocket in connected_clients:
+                connected_clients.remove(websocket)
 
 
 signal_queue: asyncio.Queue = asyncio.Queue()
 
 
-def on_signal(signal: dict):
-    """Callback из SignalEngine."""
-    symbol = signal.get("symbol", "")
+def _get_exchange_age(symbol: str, exchange: str) -> float:
+    entry = aggregator.prices.get(symbol.upper(), {}).get(exchange)
+    if not entry:
+        return 999.0
+    return max(0.0, time.time() - entry.get("ts", 0))
 
-    # Чёрный список — блокируем полностью
+
+def _build_fill_metrics(symbol: str, buy_exchange: str, sell_exchange: str, gross_spread: float) -> tuple[float, float]:
+    symbol = symbol.upper()
+    max_size = orderbook.get_max_size(symbol, buy_exchange, sell_exchange)
+    fill_prob = fill_probability.estimate(
+        symbol=symbol,
+        buy_exchange=buy_exchange,
+        sell_exchange=sell_exchange,
+        gross_spread_pct=gross_spread,
+        max_size_usd=max_size,
+        buy_age_sec=_get_exchange_age(symbol, buy_exchange),
+        sell_age_sec=_get_exchange_age(symbol, sell_exchange),
+        buy_health=health.get_exchange_status(buy_exchange),
+        sell_health=health.get_exchange_status(sell_exchange),
+    )
+    return max_size, fill_prob
+
+
+def on_signal(signal: dict):
+    symbol = signal.get("symbol", "").upper()
     if blacklist.is_blocked(symbol):
         return
 
-    # Сохраняем в историю
-    history.add(signal)
+    max_size, fill_prob = _build_fill_metrics(
+        symbol,
+        signal.get("buy_on", ""),
+        signal.get("sell_on", ""),
+        signal.get("deviation_pct", 0.0),
+    )
+    signal["max_size_usd"] = round(max_size, 2)
+    signal["fill_prob_pct"] = fill_prob
 
-    # Шлём на фронтенд
+    history.add(signal)
     signal_queue.put_nowait(signal)
 
-    # Telegram (с фильтром по спреду)
-    net = signal.get("net_spread_pct", 0)
-    if telegram and net >= MIN_TG_SPREAD:
+    net_spread = signal.get("net_spread_pct", 0)
+    if telegram and net_spread >= MIN_TG_SPREAD:
         telegram.on_signal(signal)
 
 
@@ -142,66 +146,43 @@ async def signal_sender():
         signal = await signal_queue.get()
         await broadcast_signal(signal)
 
-# ======================================================================
-# Связываем компоненты
-# ======================================================================
 
 def on_price_update(symbol: str, exchange: str, bid: float, ask: float):
-    # Обновляем здоровье биржи
     health.on_update(exchange, symbol)
-
     aggregator.update(symbol, exchange, bid, ask)
     price_store.on_price(symbol, exchange, bid, ask)
+    fill_probability.on_price(symbol, exchange, bid, ask)
+
     prices = aggregator.get_prices(symbol)
     if prices:
         engine.on_price_update(symbol, prices)
 
 
-engine.set_on_signal(on_signal)
-engine.set_on_pair(lambda sym, buy, sell, gross, bp, sp: convergence.update(sym, buy, sell, gross, bp, sp))
-
-
-def on_convergence(payload: dict):
-    """Алерт о схождении спреда — в Telegram + WS."""
-    if blacklist.is_blocked(payload.get("symbol", "")):
+def on_pair_evaluated(symbol: str, buy_exchange: str, sell_exchange: str, gross_spread: float, _buy_price: float, _sell_price: float):
+    if "dex" in (buy_exchange, sell_exchange) and gross_spread > 50:
         return
-    if telegram:
-        telegram.on_convergence(payload)
-    # Шлём на фронт (тип события = convergence, чтобы фронт мог отличить)
-    try:
-        signal_queue.put_nowait({"type": "convergence", **payload})
-    except Exception:
-        pass
-    sym = payload.get("symbol", "?")
-    peak = payload.get("peak_spread_pct", 0)
-    cur = payload.get("current_spread_pct", 0)
-    print(f"[Convergence] {sym} {peak:.2f}% → {cur:.2f}%")
+    fill_probability.track_spread(symbol, buy_exchange, sell_exchange, gross_spread)
 
 
-convergence.set_on_convergence(on_convergence)
+engine.set_on_signal(on_signal)
+engine.set_on_pair(on_pair_evaluated)
 
-# ======================================================================
-# WebSocket
-# ======================================================================
 
 @app.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket):
-    await ws.accept()
-    connected_clients.append(ws)
-    print(f"[WS] Клиент подключён. Всего: {len(connected_clients)}")
+async def websocket_endpoint(websocket: WebSocket):
+    await websocket.accept()
+    connected_clients.append(websocket)
+    print(f"[WS] client connected. Total: {len(connected_clients)}")
     try:
         while True:
-            await ws.receive_text()
+            await websocket.receive_text()
     except WebSocketDisconnect:
         pass
     finally:
-        if ws in connected_clients:
-            connected_clients.remove(ws)
-        print(f"[WS] Клиент отключён. Всего: {len(connected_clients)}")
+        if websocket in connected_clients:
+            connected_clients.remove(websocket)
+        print(f"[WS] client disconnected. Total: {len(connected_clients)}")
 
-# ======================================================================
-# REST API
-# ======================================================================
 
 @app.get("/")
 async def root():
@@ -209,23 +190,21 @@ async def root():
     if index.exists():
         return FileResponse(index)
     import config
+
     return {"app": "Arb-Scanner", "version": "0.4.0", "symbols": len(config.SYMBOLS)}
 
 
 @app.get("/prices")
 async def get_prices():
-    # Возвращаем прямую ссылку — не deep copy. FastAPI сериализует сам.
     return aggregator.prices
 
 
-# --- Кэш для /spreads (самый тяжёлый endpoint) ---
 _spreads_cache: list = []
 _spreads_cache_ts: float = 0.0
-_SPREADS_TTL: float = 2.0  # секунды
+_SPREADS_TTL: float = 2.0
 
 
 def _compute_spreads() -> list:
-    """Вычислить spreads — вынесено для кэширования."""
     prices = aggregator.prices
     blocked = set(blacklist.get_all())
     result = []
@@ -236,54 +215,50 @@ def _compute_spreads() -> list:
 
         best = None
         best_net = -999.0
-        exch_list = list(exchanges.items())
+        exchange_items = list(exchanges.items())
 
-        for i in range(len(exch_list)):
-            sell_name, sell_data = exch_list[i]
+        for sell_index, (sell_exchange, sell_data) in enumerate(exchange_items):
             sell_price = sell_data["bid"]
             if sell_price <= 0:
                 continue
 
-            for j in range(len(exch_list)):
-                if i == j:
+            for buy_index, (buy_exchange, buy_data) in enumerate(exchange_items):
+                if sell_index == buy_index:
                     continue
-                buy_name, buy_data = exch_list[j]
-                buy_price = buy_data["ask"]
 
+                buy_price = buy_data["ask"]
                 if buy_price <= 0:
                     continue
 
                 gross = ((sell_price - buy_price) / buy_price) * 100
-                net = gross - FEES.get(buy_name, 0.05) - FEES.get(sell_name, 0.05)
+                if "dex" in (buy_exchange, sell_exchange) and gross > 50:
+                    continue
 
+                net = gross - FEES.get(buy_exchange, 0.05) - FEES.get(sell_exchange, 0.05)
                 if net > best_net:
+                    max_size, fill_prob = _build_fill_metrics(symbol, buy_exchange, sell_exchange, gross)
                     best_net = net
                     best = {
                         "symbol": symbol,
-                        "buy_on": buy_name,
-                        "sell_on": sell_name,
+                        "buy_on": buy_exchange,
+                        "sell_on": sell_exchange,
                         "buy_price": buy_price,
                         "sell_price": sell_price,
                         "gross_spread": round(gross, 4),
                         "net_spread": round(net, 4),
                         "exchanges": len(exchanges),
-                        "max_size_usd": round(
-                            orderbook.get_max_size(symbol, buy_name, sell_name), 2
-                        ),
+                        "max_size_usd": round(max_size, 2),
+                        "fill_prob_pct": fill_prob,
                     }
 
         if best:
             result.append(best)
 
-    result.sort(key=lambda x: x["net_spread"], reverse=True)
+    result.sort(key=lambda item: item["net_spread"], reverse=True)
     return result
 
 
 def _snapshot_symbol_candles(symbol: str) -> dict:
-    """
-    Build synthetic current candles from aggregator mid-prices.
-    Used as a fallback when PriceStore has not accumulated history yet.
-    """
     snapshot = {}
     ts = int(time.time() // 60) * 60
     for exchange, data in aggregator.prices.get(symbol.upper(), {}).items():
@@ -319,8 +294,6 @@ async def get_stats():
     }
 
 
-# --- Blacklist ---
-
 class SymbolRequest(BaseModel):
     symbol: str
 
@@ -342,8 +315,6 @@ async def remove_from_blacklist(req: SymbolRequest):
     return {"status": "removed", "symbol": req.symbol.upper()}
 
 
-# --- History ---
-
 @app.get("/history")
 async def get_history(limit: int = 200):
     return history.get_recent(limit)
@@ -354,8 +325,6 @@ async def get_history_stats():
     return history.get_stats()
 
 
-# --- Health ---
-
 @app.get("/health")
 async def get_health():
     return health.get_status()
@@ -365,6 +334,7 @@ async def get_health():
 async def get_price_history(symbol: str, tf: str = "1m"):
     if tf not in ("1m", "5m", "15m", "30m", "1h", "4h"):
         return {"error": "tf must be 1m, 5m, 15m, 30m, 1h, or 4h"}
+
     result = price_store.get_history(symbol.upper(), tf)
     fallback = _snapshot_symbol_candles(symbol)
     for exchange, candle in fallback.items():
@@ -384,9 +354,9 @@ async def get_price_live(symbol: str):
 
 @app.get("/telegram/status")
 async def get_telegram_status():
-    """Диагностика Telegram-бота."""
     if not telegram:
-        return {"active": False, "reason": "Telegram не настроен (.env)"}
+        return {"active": False, "reason": "Telegram is not configured (.env)"}
+
     return {
         "active": True,
         "min_tg_spread": MIN_TG_SPREAD,
@@ -394,64 +364,72 @@ async def get_telegram_status():
     }
 
 
-# ======================================================================
-# Startup
-# ======================================================================
-
 @app.on_event("startup")
 async def startup():
     import config
 
     print("=" * 50)
-    print(f"  ARB-SCANNER v0.4 запускается...")
+    print("  ARB-SCANNER v0.4 starting...")
 
-    # Загружаем символы ПАРАЛЛЕЛЬНО (раньше — последовательно при импорте)
     symbols = load_symbols()
 
-    print(f"  Символы: {len(symbols)}")
-    print(f"  Биржи:   {EXCHANGES}")
-    print(f"  Blacklist: {len(blacklist.get_all())} монет")
+    print(f"  Symbols: {len(symbols)}")
+    print(f"  Exchanges: {EXCHANGES}")
+    print(f"  Blacklist: {len(blacklist.get_all())} symbols")
     print(f"  TG min spread: {MIN_TG_SPREAD}%")
     print("=" * 50)
 
     asyncio.create_task(signal_sender())
+    await orderbook.start()
 
-    # Periodic flush of price candles to SQLite
     async def flush_loop():
         while True:
             await asyncio.sleep(60)
             price_store.flush()
+
     asyncio.create_task(flush_loop())
 
-    # Auto Size Calculator — периодически обновляем стаканы для топ-N спредов
-    await orderbook.start()
-
     async def size_refresh_loop():
-        from core.orderbook import REFRESH_INTERVAL
+        global _spreads_cache, _spreads_cache_ts
         while True:
             try:
-                if _spreads_cache:
-                    await orderbook.refresh_for_spreads(_spreads_cache)
-            except Exception as e:
-                print(f"[OrderBook] refresh error: {e}")
+                current_spreads = _compute_spreads()
+                _spreads_cache = current_spreads
+                _spreads_cache_ts = time.monotonic()
+                if current_spreads:
+                    await orderbook.refresh_for_spreads(current_spreads)
+            except Exception as exc:
+                print(f"[OrderBook] refresh error: {exc}")
             await asyncio.sleep(REFRESH_INTERVAL)
+
     asyncio.create_task(size_refresh_loop())
 
-    for exch_name in EXCHANGES:
-        connector_cls = CONNECTOR_REGISTRY.get(exch_name)
+    for exchange in EXCHANGES:
+        connector_cls = CONNECTOR_REGISTRY.get(exchange)
         if not connector_cls:
-            print(f"[!] Коннектор для '{exch_name}' не найден")
+            print(f"[!] missing connector for '{exchange}'")
             continue
-        connector = connector_cls(on_price_update=on_price_update)
+
+        if exchange == "dex":
+            connector = connector_cls(
+                on_price_update=on_price_update,
+                on_liquidity=orderbook.set_dex_liquidity,
+            )
+        else:
+            connector = connector_cls(on_price_update=on_price_update)
+
         asyncio.create_task(connector.connect(config.SYMBOLS))
-        print(f"[+] {exch_name} — запущен")
+        print(f"[+] {exchange} started")
 
     print()
-    print("Сервер готов: http://localhost:8000")
+    print("Server ready: http://localhost:8000")
 
-# ======================================================================
-# Статические файлы фронтенда (монтировать ПОСЛЕ API-роутов)
-# ======================================================================
+
+@app.on_event("shutdown")
+async def shutdown():
+    await orderbook.stop()
+    price_store.flush()
+
 
 if STATIC_DIR.exists():
     app.mount("/static", StaticFiles(directory=STATIC_DIR / "static"), name="static-assets")

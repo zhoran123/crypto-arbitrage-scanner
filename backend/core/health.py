@@ -1,17 +1,11 @@
-"""
-Exchange Health Monitor — отслеживает статус каждой биржи.
-"""
-
 import time
 
 
 class HealthMonitor:
     def __init__(self):
-        # {exchange: {last_update: float, updates: int, symbols: set}}
         self._data: dict[str, dict] = {}
 
     def on_update(self, exchange: str, symbol: str):
-        """Вызывается при каждом обновлении цены."""
         now = time.time()
         if exchange not in self._data:
             self._data[exchange] = {
@@ -20,36 +14,41 @@ class HealthMonitor:
                 "symbols": set(),
                 "first_seen": now,
             }
-        d = self._data[exchange]
-        d["last_update"] = now
-        d["updates"] += 1
-        d["symbols"].add(symbol)
+
+        exchange_data = self._data[exchange]
+        exchange_data["last_update"] = now
+        exchange_data["updates"] += 1
+        exchange_data["symbols"].add(symbol)
 
     def get_status(self) -> list[dict]:
-        """Статус всех бирж."""
+        return [
+            self._build_status(exchange, payload)
+            for exchange, payload in sorted(self._data.items())
+        ]
+
+    def get_exchange_status(self, exchange: str) -> dict | None:
+        payload = self._data.get(exchange)
+        if not payload:
+            return None
+        return self._build_status(exchange, payload)
+
+    def _build_status(self, exchange: str, payload: dict) -> dict:
         now = time.time()
-        result = []
-        for exch, d in sorted(self._data.items()):
-            age = now - d["last_update"]
-            uptime = now - d["first_seen"]
+        age = now - payload["last_update"]
+        uptime = now - payload["first_seen"]
 
-            if age < 10:
-                status = "online"
-            elif age < 30:
-                status = "lagging"
-            else:
-                status = "offline"
+        if age < 10:
+            status = "online"
+        elif age < 30:
+            status = "lagging"
+        else:
+            status = "offline"
 
-            # Updates per second (за всё время)
-            ups = d["updates"] / max(uptime, 1)
-
-            result.append({
-                "exchange": exch,
-                "status": status,
-                "last_update_sec": round(age, 1),
-                "total_updates": d["updates"],
-                "symbols_active": len(d["symbols"]),
-                "updates_per_sec": round(ups, 1),
-            })
-
-        return result
+        return {
+            "exchange": exchange,
+            "status": status,
+            "last_update_sec": round(age, 1),
+            "total_updates": payload["updates"],
+            "symbols_active": len(payload["symbols"]),
+            "updates_per_sec": round(payload["updates"] / max(uptime, 1), 1),
+        }

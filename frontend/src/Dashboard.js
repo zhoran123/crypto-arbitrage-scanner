@@ -13,16 +13,57 @@ const WS_URL = IS_FRONTEND_DEV
   : `${window.location.protocol === "https:" ? "wss" : "ws"}://${window.location.host}/ws`;
 
 const EX_COL = {
-  binance: "#F0B90B", bybit: "#F7A600", mexc: "#00B897", bingx: "#60a5fa",
-  gate: "#60a5fa", bitget: "#00c9a7", okx: "#a78bfa", kucoin: "#23AF91",
+  binance: "#F0B90B",
+  bybit: "#F7A600",
+  mexc: "#00B897",
+  bingx: "#60a5fa",
+  gate: "#22d3ee",
+  bitget: "#00c9a7",
+  okx: "#a78bfa",
+  kucoin: "#23AF91",
   dex: "#f472b6",
 };
 
-function fmtP(p) { return p >= 1000 ? p.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : p >= 1 ? p.toFixed(4) : p.toFixed(6); }
-function fmtUSD(v) { if (!v || v <= 0) return "—"; if (v >= 1e6) return "$" + (v / 1e6).toFixed(1) + "M"; if (v >= 1e3) return "$" + (v / 1e3).toFixed(1) + "k"; return "$" + Math.round(v); }
-function timeAgo(iso) { const d = (Date.now() - new Date(iso).getTime()) / 1000; return d < 5 ? "now" : d < 60 ? Math.floor(d) + "s" : d < 3600 ? Math.floor(d / 60) + "m" : Math.floor(d / 3600) + "h"; }
+const ALL_EXCHANGES = ["binance", "bybit", "okx", "bitget", "gate", "mexc", "bingx", "kucoin", "dex"];
+const EX_LABEL = {
+  binance: "BIN",
+  bybit: "BYB",
+  okx: "OKX",
+  bitget: "BGT",
+  gate: "GATE",
+  mexc: "MEXC",
+  bingx: "BING",
+  kucoin: "KCS",
+  dex: "DEX",
+};
+
+function fmtP(p) {
+  return p >= 1000
+    ? p.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : p >= 1
+      ? p.toFixed(4)
+      : p.toFixed(6);
+}
+
+function fmtUSD(v) {
+  if (!v || v <= 0) return "-";
+  if (v >= 1e6) return `$${(v / 1e6).toFixed(1)}M`;
+  if (v >= 1e3) return `$${(v / 1e3).toFixed(1)}k`;
+  return `$${Math.round(v)}`;
+}
+
+function timeAgo(iso) {
+  const d = (Date.now() - new Date(iso).getTime()) / 1000;
+  return d < 5 ? "now" : d < 60 ? Math.floor(d) + "s" : d < 3600 ? Math.floor(d / 60) + "m" : Math.floor(d / 3600) + "h";
+}
+
 function qCol(q) { return q >= 70 ? "#0ea5e9" : q >= 40 ? "#0284c7" : "#1e3a5f"; }
 function spreadCol(n) { return n > 0.3 ? "#10b981" : n > 0 ? "#6ee7b7" : n > -0.1 ? "#64748b" : "#475569"; }
+function fillCol(n) { return n >= 70 ? "#10b981" : n >= 40 ? "#f59e0b" : "#64748b"; }
+
+function pairVisible(item, hiddenSet) {
+  return !hiddenSet.has(item.buy_on) && !hiddenSet.has(item.sell_on);
+}
 
 export default function Dashboard() {
   const [signals, setSignals] = useState([]);
@@ -36,19 +77,32 @@ export default function Dashboard() {
   const [tab, setTab] = useState("spreads");
   const [search, setSearch] = useState("");
   const [tblMin, setTblMin] = useState(-1);
-  const [sigMin, setSigMin] = useState(3);
-  const [showF, setShowF] = useState(true);
-  const [favs, setFavs] = useState(() => {
-    try { return JSON.parse(localStorage.getItem("fa_favs") || "[]"); }
+  const [sigMin, setSigMin] = useState(0);
+  const [showF, setShowF] = useState(false);
+  const [hiddenExchanges, setHiddenExchanges] = useState(() => {
+    try { return JSON.parse(localStorage.getItem("fa_hidden_exchanges") || "[]"); }
     catch { return []; }
   });
-  const wsRef = useRef(null); const rcRef = useRef(null);
+  const wsRef = useRef(null);
+  const rcRef = useRef(null);
 
-  const toggleFav = useCallback(sym => {
-    const s = sym.toUpperCase();
-    setFavs(prev => {
-      const next = prev.includes(s) ? prev.filter(x => x !== s) : [s, ...prev];
-      try { localStorage.setItem("fa_favs", JSON.stringify(next)); } catch {}
+  const hiddenSet = new Set(hiddenExchanges);
+  const visibleSpreads = spreads.filter(s => pairVisible(s, hiddenSet));
+  const visibleHistory = history.filter(s => pairVisible(s, hiddenSet));
+  const visibleHealth = health.filter(h => !hiddenSet.has(h.exchange));
+  const filtSig = signals.filter(s =>
+    s.net_spread_pct >= sigMin
+    && s.buy_on !== "dex"
+    && s.sell_on !== "dex"
+    && pairVisible(s, hiddenSet)
+  );
+
+  const toggleExchange = useCallback(exchange => {
+    setHiddenExchanges(prev => {
+      const next = prev.includes(exchange)
+        ? prev.filter(item => item !== exchange)
+        : [...prev, exchange];
+      try { localStorage.setItem("fa_hidden_exchanges", JSON.stringify(next)); } catch {}
       return next;
     });
   }, []);
@@ -56,9 +110,16 @@ export default function Dashboard() {
   const connectWs = useCallback(() => {
     if (wsRef.current && wsRef.current.readyState <= 1) return;
     setWsStatus("connecting");
-    const ws = new WebSocket(WS_URL); wsRef.current = ws;
+    const ws = new WebSocket(WS_URL);
+    wsRef.current = ws;
     ws.onopen = () => setWsStatus("connected");
-    ws.onmessage = e => { try { const s = JSON.parse(e.data); setSignals(p => [s, ...p].slice(0, 200)); } catch {} };
+    ws.onmessage = e => {
+      try {
+        const s = JSON.parse(e.data);
+        if (s.type === "convergence") return;
+        setSignals(p => [s, ...p].slice(0, 200));
+      } catch {}
+    };
     ws.onclose = () => { setWsStatus("disconnected"); rcRef.current = setTimeout(connectWs, 3000); };
     ws.onerror = () => ws.close();
   }, []);
@@ -66,33 +127,40 @@ export default function Dashboard() {
   useEffect(() => { connectWs(); return () => { clearTimeout(rcRef.current); wsRef.current?.close(); }; }, [connectWs]);
 
   useEffect(() => {
-    let a = true;
+    let active = true;
     async function poll() {
       try {
         const [s, sp, h, b] = await Promise.all([
           fetch(`${API}/stats`), fetch(`${API}/spreads`),
           fetch(`${API}/health`), fetch(`${API}/blacklist`),
         ]);
-        if (!a) return;
-        setStats(await s.json()); setSpreads(await sp.json());
-        setHealth(await h.json()); const bl = await b.json(); setBL(bl.symbols || []);
+        if (!active) return;
+        setStats(await s.json());
+        setSpreads(await sp.json());
+        setHealth(await h.json());
+        const bl = await b.json();
+        setBL(bl.symbols || []);
       } catch {}
     }
-    poll(); const id = setInterval(poll, 6000);
-    return () => { a = false; clearInterval(id); };
+    poll();
+    const id = setInterval(poll, 6000);
+    return () => { active = false; clearInterval(id); };
   }, []);
 
   useEffect(() => {
     if (tab !== "history") return;
-    let a = true;
+    let active = true;
     async function load() {
       try {
         const [h, hs] = await Promise.all([fetch(`${API}/history?limit=100`), fetch(`${API}/history/stats`)]);
-        if (!a) return; setHistory(await h.json()); setHStats(await hs.json());
+        if (!active) return;
+        setHistory(await h.json());
+        setHStats(await hs.json());
       } catch {}
     }
-    load(); const id = setInterval(load, 10000);
-    return () => { a = false; clearInterval(id); };
+    load();
+    const id = setInterval(load, 10000);
+    return () => { active = false; clearInterval(id); };
   }, [tab]);
 
   const [, setTick] = useState(0);
@@ -103,13 +171,13 @@ export default function Dashboard() {
     fetch(`${API}/blacklist/add`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: sym }) })
       .catch(() => setBL(p => p.filter(s => s !== sym.toUpperCase())));
   };
+
   const unblock = async sym => {
     setBL(p => p.filter(s => s !== sym.toUpperCase()));
     fetch(`${API}/blacklist/remove`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: sym }) })
       .catch(() => setBL(p => [...p, sym.toUpperCase()].sort()));
   };
 
-  const filtSig = signals.filter(s => s.net_spread_pct >= sigMin);
   const TABS = ["spreads", "charts", "signals", "health", "history", "blacklist"];
   const TAB_LABELS = {
     spreads: "Spreads",
@@ -138,6 +206,25 @@ export default function Dashboard() {
             <span className={`status-text status-text--${wsStatus}`}>
               {wsStatus === "connected" ? "LIVE" : wsStatus === "connecting" ? "CONNECTING" : "OFFLINE"}
             </span>
+            <div className="exchange-toggles" aria-label="Exchange visibility">
+              {ALL_EXCHANGES.map(exchange => {
+                const hidden = hiddenSet.has(exchange);
+                const color = EX_COL[exchange] || "#94a3b8";
+                return (
+                  <button
+                    key={exchange}
+                    type="button"
+                    onClick={() => toggleExchange(exchange)}
+                    className={`exchange-toggle${hidden ? " exchange-toggle--off" : ""}`}
+                    style={{ "--exchange-color": color, "--exchange-bg": `${color}1a`, "--exchange-border": `${color}45` }}
+                    title={`${hidden ? "Show" : "Hide"} ${exchange}`}
+                  >
+                    <span className="exchange-toggle-dot" />
+                    <span>{EX_LABEL[exchange]}</span>
+                  </button>
+                );
+              })}
+            </div>
           </div>
           {stats && (
             <div className="status-right">
@@ -151,9 +238,7 @@ export default function Dashboard() {
         <div className="tab-inner">
           {TABS.map(t2 => (
             <button key={t2} onClick={() => setTab(t2)} className={`tab${tab === t2 ? " tab--active" : ""}`}>
-              <span className="tab-content">
-                {TAB_ICONS[t2]}{TAB_LABELS[t2]}
-              </span>
+              <span className="tab-content">{TAB_ICONS[t2]}{TAB_LABELS[t2]}</span>
               {tab === t2 && (
                 <motion.div layoutId="tabIndicator" className="tab-line" transition={{ type: "spring", stiffness: 400, damping: 30 }} />
               )}
@@ -173,7 +258,7 @@ export default function Dashboard() {
         {tab === "signals" && showF && (
           <motion.div className="filter-bar" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}>
             <div className="filter-inner">
-              <Slider l="MIN NET SPREAD" v={sigMin} set={setSigMin} min={0} max={10} step={0.1} fmt={v => v.toFixed(1) + "%"} />
+              <Slider l="MIN NET SPREAD" v={sigMin} set={setSigMin} min={0} max={5} step={0.1} fmt={v => v.toFixed(1) + "%"} />
             </div>
           </motion.div>
         )}
@@ -181,15 +266,15 @@ export default function Dashboard() {
       <main className="dash-main">
         <AnimatePresence mode="wait">
           <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.2 }}>
-            {tab === "spreads" && <SpreadsTab spreads={spreads} search={search} setSearch={setSearch} min={tblMin} setMin={setTblMin} onBlock={block} blocked={blacklist} favs={favs} onFav={toggleFav} />}
-            {tab === "charts" && <ChartsTab spreads={spreads} favs={favs} onFav={toggleFav} />}
+            {tab === "spreads" && <SpreadsTab spreads={visibleSpreads} allSpreads={spreads} search={search} setSearch={setSearch} min={tblMin} setMin={setTblMin} onBlock={block} blocked={blacklist} />}
+            {tab === "charts" && <ChartsTab spreads={visibleSpreads} hiddenExchanges={hiddenExchanges} />}
             {tab === "signals" && (
               filtSig.length === 0
                 ? <Empty t="Waiting for signals..." d={`${stats?.price_updates?.toLocaleString() || 0} updates processed. Signals appear when spreads exceed thresholds.`} />
                 : <div className="signals-list">{filtSig.map((s, i) => <SigCard key={s.timestamp + i} s={s} isNew={i === 0} />)}</div>
             )}
-            {tab === "health" && <HealthTab data={health} />}
-            {tab === "history" && <HistoryTab data={history} stats={hStats} />}
+            {tab === "health" && <HealthTab data={visibleHealth} />}
+            {tab === "history" && <HistoryTab data={visibleHistory} stats={hStats} />}
             {tab === "blacklist" && <BLTab list={blacklist} onUnblock={unblock} />}
           </motion.div>
         </AnimatePresence>
@@ -210,9 +295,7 @@ function Chip({ l, v, accent, warn }) {
 function Slider({ l, v, set, min, max, step, fmt }) {
   return (
     <div className="slider">
-      <label className="slider-label">
-        {l}<span className="slider-value">{fmt(v)}</span>
-      </label>
+      <label className="slider-label">{l}<span className="slider-value">{fmt(v)}</span></label>
       <input type="range" min={min} max={max} step={step} value={v} onChange={e => set(parseFloat(e.target.value))} />
     </div>
   );
@@ -229,6 +312,7 @@ function Empty({ t, d }) {
 
 function SigCard({ s, isNew }) {
   const c = qCol(s.quality);
+  const fill = Number(s.fill_prob_pct || 0);
   return (
     <motion.div
       className="card card--accent-left"
@@ -242,6 +326,7 @@ function SigCard({ s, isNew }) {
           {s.symbol.replace("USDT", "")}<span className="sig-suffix">/USDT</span>
         </span>
         <div className="sig-meta">
+          <span className="sig-fill" style={{ color: fillCol(fill), borderColor: `${fillCol(fill)}40`, background: `${fillCol(fill)}14` }}>{fill.toFixed(0)}% Fill</span>
           <span className="sig-quality">{s.quality}</span>
           <span className="sig-time">{timeAgo(s.timestamp)}</span>
         </div>
@@ -267,6 +352,7 @@ function SigCard({ s, isNew }) {
         <Metric l="Z-Score" v={s.z_score.toFixed(1)} h={s.z_score >= 5} />
         <Metric l="Net" v={`${s.net_spread_pct >= 0 ? "+" : ""}${s.net_spread_pct.toFixed(3)}%`} h={s.net_spread_pct > 0} />
         <Metric l="Gross" v={`${s.deviation_pct.toFixed(3)}%`} />
+        <Metric l="Max Size" v={fmtUSD(s.max_size_usd)} />
       </div>
     </motion.div>
   );
@@ -281,19 +367,11 @@ function Metric({ l, v, h }) {
   );
 }
 
-function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked, favs, onFav }) {
-  const favSet = new Set(favs);
-  const f = spreads
-    .filter(s => {
-      if (search && !s.symbol.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, ""))) return false;
-      return s.net_spread >= min;
-    })
-    .sort((a, b) => {
-      const af = favSet.has(a.symbol) ? 1 : 0;
-      const bf = favSet.has(b.symbol) ? 1 : 0;
-      if (af !== bf) return bf - af;
-      return b.net_spread - a.net_spread;
-    });
+function SpreadsTab({ spreads, allSpreads, search, setSearch, min, setMin, onBlock, blocked }) {
+  const f = spreads.filter(s => {
+    if (search && !s.symbol.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, ""))) return false;
+    return s.net_spread >= min;
+  });
   return (
     <div>
       <div className="spreads-controls">
@@ -306,38 +384,28 @@ function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked,
         </div>
         <Slider l="MIN NET SPREAD" v={min} set={setMin} min={-1} max={5} step={0.1} fmt={v => v.toFixed(1) + "%"} />
         <div className="spreads-count">
-          {f.length} shown &middot; <span className="spreads-profitable">{spreads.filter(s => s.net_spread > 0).length} profitable</span>
+          {f.length} shown &middot; <span className="spreads-profitable">{allSpreads.filter(s => s.net_spread > 0).length} profitable</span>
         </div>
       </div>
       <div className="tbl-wrap">
         <table className="tbl">
           <thead>
             <tr>
-              <th className="th th--narrow"></th>
               <th className="th th--narrow">#</th>
               <th className="th th--left">Symbol</th>
               <th className="th">Buy</th><th className="th">Price</th>
               <th className="th">Sell</th><th className="th">Price</th>
               <th className="th">Gross</th><th className="th">Net</th>
-              <th className="th">Max Size</th>
+              <th className="th">Max Size</th><th className="th">Fill %</th>
               <th className="th">Exch</th><th className="th th--narrow"></th>
             </tr>
           </thead>
           <tbody>
             {f.map((s, i) => {
               const nc = spreadCol(s.net_spread);
-              const isFav = favSet.has(s.symbol);
+              const fill = Number(s.fill_prob_pct || 0);
               return (
                 <tr key={s.symbol} className={i % 2 === 0 ? "tbl-row--even" : "tbl-row--odd"}>
-                  <td className="td">
-                    <button
-                      onClick={() => onFav(s.symbol)}
-                      className={`fav-btn${isFav ? " fav-btn--active" : ""}`}
-                      title={isFav ? "Unpin" : "Pin to top"}
-                    >
-                      {isFav ? "★" : "☆"}
-                    </button>
-                  </td>
                   <td className="td td--muted">{i + 1}</td>
                   <td className="td td--left">
                     <span className="tbl-symbol">{s.symbol.replace("USDT", "")}</span>
@@ -349,7 +417,8 @@ function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked,
                   <td className="td td--price">${fmtP(s.sell_price)}</td>
                   <td className="td td--price">{s.gross_spread.toFixed(3)}%</td>
                   <td className="td td--emphasis" style={{ color: nc }}>{s.net_spread >= 0 ? "+" : ""}{s.net_spread.toFixed(3)}%</td>
-                  <td className="td td--price" title="Max USD notional with <0.2% slippage per leg">{fmtUSD(s.max_size_usd)}</td>
+                  <td className="td td--price">{fmtUSD(s.max_size_usd)}</td>
+                  <td className="td td--fill" style={{ color: fillCol(fill) }}>{fill > 0 ? `${fill.toFixed(0)}%` : "-"}</td>
                   <td className="td td--exchanges">{s.exchanges}</td>
                   <td className="td">
                     <button
@@ -364,7 +433,7 @@ function SpreadsTab({ spreads, search, setSearch, min, setMin, onBlock, blocked,
             })}
           </tbody>
         </table>
-        {f.length === 0 && <Empty t="No matches" d="Adjust search or spread filter" />}
+        {f.length === 0 && <Empty t="No matches" d="Adjust search, spread, or exchange filters" />}
       </div>
     </div>
   );
@@ -428,26 +497,32 @@ function HistoryTab({ data, stats }) {
                   <th className="th th--left">Symbol</th>
                   <th className="th">Buy</th><th className="th">Sell</th>
                   <th className="th">Gross</th><th className="th">Net</th>
+                  <th className="th">Fill %</th><th className="th">Max Size</th>
                   <th className="th">Q</th><th className="th">Time</th>
                 </tr>
               </thead>
               <tbody>
-                {data.map((s, i) => (
-                  <tr key={i} className={i % 2 === 0 ? "tbl-row--even" : "tbl-row--odd"}>
-                    <td className="td td--left">
-                      <span className="tbl-symbol">{s.symbol?.replace("USDT", "")}</span>
-                      <span className="tbl-suffix">/USDT</span>
-                    </td>
-                    <td className="td"><span className="exchange-name" style={{ color: EX_COL[s.buy_on] || "#94a3b8" }}>{s.buy_on}</span></td>
-                    <td className="td"><span className="exchange-name" style={{ color: EX_COL[s.sell_on] || "#94a3b8" }}>{s.sell_on}</span></td>
-                    <td className="td td--price">{s.deviation_pct?.toFixed(3)}%</td>
-                    <td className="td td--emphasis" style={{ color: spreadCol(s.net_spread_pct) }}>
-                      {s.net_spread_pct >= 0 ? "+" : ""}{s.net_spread_pct?.toFixed(3)}%
-                    </td>
-                    <td className="td td--quality" style={{ color: qCol(s.quality) }}>{s.quality}</td>
-                    <td className="td td--time">{timeAgo(s.timestamp)}</td>
-                  </tr>
-                ))}
+                {data.map((s, i) => {
+                  const fill = Number(s.fill_prob_pct || 0);
+                  return (
+                    <tr key={i} className={i % 2 === 0 ? "tbl-row--even" : "tbl-row--odd"}>
+                      <td className="td td--left">
+                        <span className="tbl-symbol">{s.symbol?.replace("USDT", "")}</span>
+                        <span className="tbl-suffix">/USDT</span>
+                      </td>
+                      <td className="td"><span className="exchange-name" style={{ color: EX_COL[s.buy_on] || "#94a3b8" }}>{s.buy_on}</span></td>
+                      <td className="td"><span className="exchange-name" style={{ color: EX_COL[s.sell_on] || "#94a3b8" }}>{s.sell_on}</span></td>
+                      <td className="td td--price">{s.deviation_pct?.toFixed(3)}%</td>
+                      <td className="td td--emphasis" style={{ color: spreadCol(s.net_spread_pct) }}>
+                        {s.net_spread_pct >= 0 ? "+" : ""}{s.net_spread_pct?.toFixed(3)}%
+                      </td>
+                      <td className="td td--fill" style={{ color: fillCol(fill) }}>{fill > 0 ? `${fill.toFixed(0)}%` : "-"}</td>
+                      <td className="td td--price">{fmtUSD(s.max_size_usd)}</td>
+                      <td className="td td--quality" style={{ color: qCol(s.quality) }}>{s.quality}</td>
+                      <td className="td td--time">{timeAgo(s.timestamp)}</td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>

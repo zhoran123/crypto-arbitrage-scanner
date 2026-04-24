@@ -8,21 +8,14 @@ const API = window.location.port === "3000"
 
 const EX_COL = {
   binance: "#F0B90B", bybit: "#F7A600", mexc: "#00B897", bingx: "#60a5fa",
-  gate: "#60a5fa", bitget: "#00c9a7", okx: "#a78bfa", kucoin: "#23AF91",
+  gate: "#22d3ee", bitget: "#00c9a7", okx: "#a78bfa", kucoin: "#23AF91",
   dex: "#f472b6",
 };
 
 const TFS = ["1m", "5m", "15m", "30m", "1h", "4h"];
 const PER_PAGE = 6;
 
-function fmtUSD(v) {
-  if (!v || v <= 0) return null;
-  if (v >= 1e6) return "$" + (v / 1e6).toFixed(1) + "M";
-  if (v >= 1e3) return "$" + (v / 1e3).toFixed(1) + "k";
-  return "$" + Math.round(v);
-}
-
-function MiniChart({ symbol, tf, height, maxSize, isFav, onFav }) {
+function MiniChart({ symbol, tf, height, hiddenExchanges }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef({});
@@ -51,7 +44,7 @@ function MiniChart({ symbol, tf, height, maxSize, isFav, onFav }) {
       crosshairMarkerRadius: 3,
       crosshairMarkerBorderColor: EX_COL[ex] || "#94a3b8",
       crosshairMarkerBackgroundColor: "#08090e",
-      visible: !hiddenRef.current[ex],
+      visible: !hiddenRef.current[ex] && !hiddenExchanges.includes(ex),
     });
     if (points.length) {
       series.setData(points);
@@ -172,7 +165,7 @@ function MiniChart({ symbol, tf, height, maxSize, isFav, onFav }) {
       active = false;
       clearInterval(retryId);
     };
-  }, [symbol, tf]);
+  }, [symbol, tf, hiddenExchanges]);
 
   // Live update every 5 seconds (only update last point, no re-create)
   useEffect(() => {
@@ -198,6 +191,7 @@ function MiniChart({ symbol, tf, height, maxSize, isFav, onFav }) {
 
           if (series) {
             series.update({ time: candle.t, value: candle.c });
+            series.applyOptions({ visible: !hiddenRef.current[ex] && !hiddenExchanges.includes(ex) });
           }
         });
       } catch {}
@@ -205,39 +199,31 @@ function MiniChart({ symbol, tf, height, maxSize, isFav, onFav }) {
 
     const id = setInterval(liveUpdate, 5000);
     return () => { active = false; clearInterval(id); };
-  }, [symbol]);
+  }, [symbol, hiddenExchanges]);
+
+  useEffect(() => {
+    Object.entries(seriesRef.current).forEach(([ex, series]) => {
+      series.applyOptions({ visible: !hiddenRef.current[ex] && !hiddenExchanges.includes(ex) });
+    });
+  }, [hiddenExchanges]);
 
   // Toggle visibility without re-fetch
   const toggleExch = ex => {
     setHidden(h => {
       const next = { ...h, [ex]: !h[ex] };
       const s = seriesRef.current[ex];
-      if (s) s.applyOptions({ visible: !next[ex] });
+      if (s) s.applyOptions({ visible: !next[ex] && !hiddenExchanges.includes(ex) });
       return next;
     });
   };
 
-  const sizeLabel = fmtUSD(maxSize);
-
   return (
     <div className="charts-card">
       <div className="charts-card-header">
-        <button
-          onClick={() => onFav && onFav(symbol)}
-          className={`charts-fav-btn${isFav ? " is-active" : ""}`}
-          title={isFav ? "Unpin" : "Pin to top"}
-        >
-          {isFav ? "★" : "☆"}
-        </button>
         <span className="charts-card-symbol">
           {symbol.replace("USDT", "")}
           <span className="charts-card-suffix">/USDT</span>
         </span>
-        {sizeLabel && (
-          <span className="charts-max-size" title="Max USD notional with <0.2% slippage per leg">
-            Max {sizeLabel}
-          </span>
-        )}
       </div>
 
       {exchanges.length > 0 && (
@@ -246,7 +232,7 @@ function MiniChart({ symbol, tf, height, maxSize, isFav, onFav }) {
             <button
               key={ex}
               onClick={() => toggleExch(ex)}
-              className={`charts-exchange-btn${hidden[ex] ? " is-hidden" : ""}`}
+              className={`charts-exchange-btn${hidden[ex] || hiddenExchanges.includes(ex) ? " is-hidden" : ""}`}
               style={{
                 "--exchange-color": EX_COL[ex] || "#94a3b8",
                 "--exchange-bg": `${EX_COL[ex] || "#94a3b8"}18`,
@@ -268,23 +254,14 @@ function MiniChart({ symbol, tf, height, maxSize, isFav, onFav }) {
   );
 }
 
-export default function ChartsTab({ spreads, favs = [], onFav }) {
+export default function ChartsTab({ spreads, hiddenExchanges = [] }) {
   const [tf, setTf] = useState("1m");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
 
-  const favSet = new Set(favs);
-  const sizeMap = {};
-  spreads.forEach(s => { sizeMap[s.symbol] = s.max_size_usd || 0; });
-
   const symbols = spreads
     .map(s => s.symbol)
-    .filter(s => !search || s.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, "")))
-    .sort((a, b) => {
-      const af = favSet.has(a) ? 1 : 0;
-      const bf = favSet.has(b) ? 1 : 0;
-      return bf - af;
-    });
+    .filter(s => !search || s.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, "")));
 
   const totalPages = Math.max(1, Math.ceil(symbols.length / PER_PAGE));
   const safePage = Math.min(page, totalPages - 1);
@@ -331,15 +308,7 @@ export default function ChartsTab({ spreads, favs = [], onFav }) {
       ) : (
         <div className="charts-grid">
           {pageSymbols.map(sym => (
-            <MiniChart
-              key={sym + tf}
-              symbol={sym}
-              tf={tf}
-              height={280}
-              maxSize={sizeMap[sym]}
-              isFav={favSet.has(sym)}
-              onFav={onFav}
-            />
+            <MiniChart key={sym + tf} symbol={sym} tf={tf} height={280} hiddenExchanges={hiddenExchanges} />
           ))}
         </div>
       )}

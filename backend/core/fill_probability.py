@@ -16,10 +16,13 @@ EXCHANGE_RELIABILITY = {
 }
 
 VOLATILITY_WINDOW_SEC = 60
+VOLATILITY_SAMPLE_SEC = 1.0
 SPREAD_GAP_RESET_SEC = 8
+SPREAD_TRACK_SAMPLE_SEC = 1.0
 SPREAD_PROXY_TARGET_SEC = 10
 SPREAD_STATE_TTL_SEC = 45
 STABILITY_TARGET_SEC = 30
+CLEANUP_INTERVAL_SEC = 5.0
 
 
 def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
@@ -29,8 +32,12 @@ def _clamp(value: float, low: float = 0.0, high: float = 1.0) -> float:
 class FillProbabilityModel:
     def __init__(self):
         self._mid_history: dict[tuple[str, str], deque[tuple[float, float]]] = defaultdict(deque)
+        self._mid_stats: dict[tuple[str, str], dict[str, float]] = defaultdict(lambda: {"sum": 0.0, "sum_sq": 0.0})
+        self._last_mid_sample: dict[tuple[str, str], float] = {}
         self._spread_state: dict[tuple[str, str, str], dict] = {}
+        self._last_spread_sample: dict[tuple[str, str, str], float] = {}
         self._proxy_history: dict[str, dict[str, int]] = defaultdict(lambda: {"success": 0, "total": 0})
+        self._last_cleanup_ts = 0.0
 
     def on_price(self, symbol: str, exchange: str, bid: float, ask: float):
         if bid <= 0 or ask <= 0:
@@ -40,21 +47,38 @@ class FillProbabilityModel:
         key = (symbol.upper(), exchange)
         mid = (bid + ask) / 2
 
+        last_sample = self._last_mid_sample.get(key, 0.0)
+        if (now - last_sample) < VOLATILITY_SAMPLE_SEC:
+            return
+        self._last_mid_sample[key] = now
+
         window = self._mid_history[key]
+        stats = self._mid_stats[key]
         window.append((now, mid))
+        stats["sum"] += mid
+        stats["sum_sq"] += mid * mid
 
         cutoff = now - VOLATILITY_WINDOW_SEC
         while window and window[0][0] < cutoff:
-            window.popleft()
+            _, old_mid = window.popleft()
+            stats["sum"] -= old_mid
+            stats["sum_sq"] -= old_mid * old_mid
 
     def track_spread(self, symbol: str, buy_exchange: str, sell_exchange: str, gross_spread_pct: float):
         now = time.time()
-        self._cleanup_spread_state(now)
+        if (now - self._last_cleanup_ts) >= CLEANUP_INTERVAL_SEC:
+            self._cleanup_spread_state(now)
+            self._last_cleanup_ts = now
 
         if gross_spread_pct <= 0:
             return
 
         key = (symbol.upper(), buy_exchange, sell_exchange)
+        last_sample = self._last_spread_sample.get(key, 0.0)
+        if key in self._spread_state and (now - last_sample) < SPREAD_TRACK_SAMPLE_SEC:
+            return
+        self._last_spread_sample[key] = now
+
         state = self._spread_state.get(key)
 
         if state is None or (now - state["last_seen"]) > SPREAD_GAP_RESET_SEC:
@@ -124,6 +148,7 @@ class FillProbabilityModel:
         ]
         for key in expired:
             del self._spread_state[key]
+            self._last_spread_sample.pop(key, None)
 
     def _freshness_score(self, age_sec: float) -> float:
         if age_sec <= 0.5:
@@ -181,16 +206,23 @@ class FillProbabilityModel:
     def _volatility_score(self, symbol: str, buy_exchange: str, sell_exchange: str) -> float:
         scores = []
         for exchange in (buy_exchange, sell_exchange):
-            window = self._mid_history.get((symbol, exchange))
-            if not window or len(window) < 5:
+            key = (symbol, exchange)
+            window = self._mid_history.get(key)
+            if not window:
+                continue
+            count = len(window)
+            if count < 5:
                 continue
 
-            values = [price for _, price in window]
-            mean = sum(values) / len(values)
+            stats = self._mid_stats.get(key)
+            if not stats:
+                continue
+
+            mean = stats["sum"] / count
             if mean <= 0:
                 continue
 
-            variance = sum((price - mean) ** 2 for price in values) / len(values)
+            variance = (stats["sum_sq"] / count) - (mean * mean)
             rel_std = math.sqrt(max(variance, 0.0)) / mean
 
             if rel_std <= 0.001:

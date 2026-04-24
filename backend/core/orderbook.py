@@ -5,10 +5,12 @@ import aiohttp
 
 
 MAX_SLIPPAGE_PCT = 0.2
-REFRESH_INTERVAL = 20
-TOP_N = 80
-CACHE_TTL = 90
+REFRESH_INTERVAL = 60
+TOP_N = 24
+CACHE_TTL = 120
+BOOK_TTL = 45
 DEPTH = 20
+MAX_CONCURRENCY = 6
 
 
 class OrderbookFetcher:
@@ -44,6 +46,7 @@ class OrderbookFetcher:
         top_spreads = spreads[:TOP_N]
         tasks = []
         seen: set[tuple[str, str]] = set()
+        now = time.time()
 
         for spread in top_spreads:
             for exchange in (spread["buy_on"], spread["sell_on"]):
@@ -51,9 +54,12 @@ class OrderbookFetcher:
                 if key in seen:
                     continue
                 seen.add(key)
+                cached = self._books.get(key)
+                if cached and (now - cached.get("ts", 0)) <= BOOK_TTL:
+                    continue
                 tasks.append(self._fetch_book(spread["symbol"], exchange))
 
-        semaphore = asyncio.Semaphore(10)
+        semaphore = asyncio.Semaphore(MAX_CONCURRENCY)
 
         async def _bounded(coro):
             async with semaphore:

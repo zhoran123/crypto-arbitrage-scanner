@@ -236,7 +236,6 @@ def _compute_spreads() -> list:
 
                 net = gross - FEES.get(buy_exchange, 0.05) - FEES.get(sell_exchange, 0.05)
                 if net > best_net:
-                    max_size, fill_prob = _build_fill_metrics(symbol, buy_exchange, sell_exchange, gross)
                     best_net = net
                     best = {
                         "symbol": symbol,
@@ -247,11 +246,17 @@ def _compute_spreads() -> list:
                         "gross_spread": round(gross, 4),
                         "net_spread": round(net, 4),
                         "exchanges": len(exchanges),
-                        "max_size_usd": round(max_size, 2),
-                        "fill_prob_pct": fill_prob,
                     }
 
         if best:
+            max_size, fill_prob = _build_fill_metrics(
+                symbol,
+                best["buy_on"],
+                best["sell_on"],
+                best["gross_spread"],
+            )
+            best["max_size_usd"] = round(max_size, 2)
+            best["fill_prob_pct"] = fill_prob
             result.append(best)
 
     result.sort(key=lambda item: item["net_spread"], reverse=True)
@@ -390,12 +395,13 @@ async def startup():
     asyncio.create_task(flush_loop())
 
     async def size_refresh_loop():
-        global _spreads_cache, _spreads_cache_ts
         while True:
             try:
-                current_spreads = _compute_spreads()
-                _spreads_cache = current_spreads
-                _spreads_cache_ts = time.monotonic()
+                # Reuse the latest computed spreads snapshot so orderbook refresh
+                # does not duplicate the most expensive CPU path in the app.
+                current_spreads = _spreads_cache
+                if not current_spreads:
+                    current_spreads = _compute_spreads()
                 if current_spreads:
                     await orderbook.refresh_for_spreads(current_spreads)
             except Exception as exc:

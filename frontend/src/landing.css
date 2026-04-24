@@ -242,7 +242,7 @@
   padding: 44px 32px;
   display: grid;
   grid-template-columns: repeat(4, 1fr);
-  gap: 32px;
+  gap: 2%;
 }
 
 .stat-item {
@@ -451,4 +451,12 @@
   font-size: 12px;
   color: #1e293b;
   margin-top: 8px;
+}
+@media (max-width: 768px) {
+  .feat-title{
+    font-size: 10px;
+  }
+  .feat-desk{
+    font-size: 8px;
+  }
 }

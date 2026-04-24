@@ -1,112 +1,140 @@
-# Деплой Arb-Scanner на сервер
+# Деплой FlashArb на сервер
 
-## Шаг 1 — Купить сервер
+## Шаг 1 — Подготовить сервер
 
-Самый простой и дешёвый вариант — **Hetzner** (ты в Европе, сервера рядом):
+Самый простой сценарий — обычный Ubuntu-сервер с Docker.
 
-1. Зайди на https://www.hetzner.com/cloud
-2. Зарегистрируйся
-3. Создай сервер:
-   - Location: **Falkenstein** (или Amsterdam)
-   - OS: **Ubuntu 24.04**
-   - Type: **CX22** (2 CPU, 4GB RAM) — ~€4/мес
-   - SSH Key: добавь свой (инструкция ниже)
-4. Запиши IP-адрес сервера
+1. Создай сервер.
+2. Запиши его текущий публичный IP.
+3. Добавь свой SSH-ключ при создании сервера.
 
-### Как создать SSH-ключ (Windows)
+### Как создать SSH-ключ на Windows
 
 Открой PowerShell и выполни:
-```
+
+```bash
 ssh-keygen -t ed25519
 ```
-Нажимай Enter на все вопросы. Затем:
-```
-cat ~/.ssh/id_ed25519.pub
-```
-Скопируй результат и вставь при создании сервера в Hetzner.
 
+Потом выведи публичный ключ:
+
+```bash
+type $env:USERPROFILE\.ssh\id_ed25519.pub
+```
+
+Скопируй его в панель провайдера при создании сервера.
 
 ## Шаг 2 — Подключиться к серверу
 
-```
+```bash
 ssh root@ТВОЙ_IP
 ```
 
-
 ## Шаг 3 — Загрузить проект на сервер
 
-С компьютера (в новом терминале):
-```
-scp -r C:\Users\EgorY\crypto_signals\Arb_scanner root@ТВОЙ_IP:~/arb-scanner
-```
+С локального компьютера:
 
+```bash
+scp -r C:\Users\EgorY\Flasharb root@ТВОЙ_IP:~/Flasharb
+```
 
 ## Шаг 4 — Установить Docker
 
 На сервере:
+
+```bash
+bash ~/Flasharb/setup_server.sh
 ```
-bash arb-scanner/setup_server.sh
-```
-Дождись окончания. Затем:
-```
+
+После установки переподключись по SSH, чтобы Docker работал корректно без старой сессии:
+
+```bash
 exit
-```
-И подключись заново:
-```
 ssh root@ТВОЙ_IP
 ```
 
+## Шаг 5 — Проверить `.env`
 
-## Шаг 5 — Проверить .env
-
+```bash
+nano ~/Flasharb/backend/.env
 ```
-nano arb-scanner/backend/.env
+
+Убедись, что заполнены:
+
+```env
+TELEGRAM_BOT_TOKEN=...
+TELEGRAM_CHAT_ID=...
+MIN_TG_SPREAD=0.5
 ```
-Убедись что TELEGRAM_BOT_TOKEN и TELEGRAM_CHAT_ID заполнены.
-Сохрани: Ctrl+O, Enter, Ctrl+X.
 
+## Шаг 6 — Открыть порт 8000
 
-## Шаг 6 — Запустить!
+Если включен `ufw`, открой порт приложения:
 
+```bash
+ufw allow 8000/tcp
+ufw status
 ```
-cd arb-scanner
+
+## Шаг 7 — Запустить приложение
+
+```bash
+cd ~/Flasharb
 docker compose up -d --build
 ```
 
-Готово! Сканер работает в фоне 24/7.
+## Шаг 8 — Проверить, что сервис жив
 
+На сервере:
+
+```bash
+docker compose ps
+docker compose logs --tail=100
+curl http://127.0.0.1:8000/stats
+```
+
+Если `curl` на `127.0.0.1:8000` отвечает JSON, значит приложение поднялось нормально.
+
+## Шаг 9 — Узнать актуальный внешний IP
+
+Если сервер переезжал, пересоздавался или менялся провайдер, не используй старый IP из памяти.
+Всегда проверяй текущий адрес командой:
+
+```bash
+hostname -I
+curl -4 ifconfig.me
+```
+
+Открывай сайт только по актуальному адресу:
+
+```text
+http://АКТУАЛЬНЫЙ_IP:8000
+```
 
 ## Полезные команды
 
 ```bash
-# Посмотреть логи (живые)
-docker compose logs -f
-
-# Посмотреть статус
+# Статус контейнера
 docker compose ps
 
-# Остановить
+# Логи
+docker compose logs -f
+
+# Пересборка и перезапуск
+docker compose up -d --build
+
+# Остановка
 docker compose down
 
-# Перезапустить
-docker compose restart
+# Проверка порта на сервере
+ss -ltnp | grep :8000
 
-# Обновить код и перезапустить
-docker compose up -d --build
+# Проверка firewall
+ufw status numbered
 ```
 
+## Важно
 
-## Подключить дашборд с ПК
-
-Открой в браузере:
-```
-http://ТВОЙ_IP:8000/prices
-http://ТВОЙ_IP:8000/stats
-```
-
-Чтобы подключить React-дашборд к серверу,
-поменяй в frontend/src/App.js:
-```
-const WS_URL = "ws://ТВОЙ_IP:8000/ws";
-const API_URL = "http://ТВОЙ_IP:8000";
-```
+- Фронтенд не требует ручной правки `API_URL` или `WS_URL` перед деплоем: в production он работает от текущего `window.location.origin`.
+- `HEAD /` может вернуть `405 Method Not Allowed` — это не ошибка сайта, если обычный `GET /` открывается.
+- Если сайт локально внутри сервера работает, а снаружи нет, сначала проверяй актуальный IP и правила firewall.

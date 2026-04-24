@@ -29,6 +29,8 @@ from core.blacklist import Blacklist
 from core.signal_history import SignalHistory
 from core.health import HealthMonitor
 from core.price_store import PriceStore
+from core.orderbook import OrderbookFetcher
+from core.convergence import ConvergenceTracker
 from alerts.telegram import TelegramAlerter
 
 from connectors.binance import BinanceConnector
@@ -39,6 +41,7 @@ from connectors.gate import GateConnector
 from connectors.bitget import BitgetConnector
 from connectors.okx import OkxConnector
 from connectors.kucoin import KucoinConnector
+from connectors.dex import DexConnector
 
 # ======================================================================
 # Инициализация
@@ -62,6 +65,8 @@ blacklist = Blacklist()
 history = SignalHistory()
 health = HealthMonitor()
 price_store = PriceStore()
+orderbook = OrderbookFetcher()
+convergence = ConvergenceTracker()
 
 # Telegram
 tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
@@ -88,6 +93,7 @@ CONNECTOR_REGISTRY = {
     "bitget":  BitgetConnector,
     "okx":     OkxConnector,
     "kucoin":  KucoinConnector,
+    "dex":     DexConnector,
 }
 
 STATIC_DIR = Path(__file__).parent / "static"
@@ -152,6 +158,27 @@ def on_price_update(symbol: str, exchange: str, bid: float, ask: float):
 
 
 engine.set_on_signal(on_signal)
+engine.set_on_pair(lambda sym, buy, sell, gross, bp, sp: convergence.update(sym, buy, sell, gross, bp, sp))
+
+
+def on_convergence(payload: dict):
+    """Алерт о схождении спреда — в Telegram + WS."""
+    if blacklist.is_blocked(payload.get("symbol", "")):
+        return
+    if telegram:
+        telegram.on_convergence(payload)
+    # Шлём на фронт (тип события = convergence, чтобы фронт мог отличить)
+    try:
+        signal_queue.put_nowait({"type": "convergence", **payload})
+    except Exception:
+        pass
+    sym = payload.get("symbol", "?")
+    peak = payload.get("peak_spread_pct", 0)
+    cur = payload.get("current_spread_pct", 0)
+    print(f"[Convergence] {sym} {peak:.2f}% → {cur:.2f}%")
+
+
+convergence.set_on_convergence(on_convergence)
 
 # ======================================================================
 # WebSocket
@@ -240,6 +267,9 @@ def _compute_spreads() -> list:
                         "gross_spread": round(gross, 4),
                         "net_spread": round(net, 4),
                         "exchanges": len(exchanges),
+                        "max_size_usd": round(
+                            orderbook.get_max_size(symbol, buy_name, sell_name), 2
+                        ),
                     }
 
         if best:
@@ -392,6 +422,20 @@ async def startup():
             await asyncio.sleep(60)
             price_store.flush()
     asyncio.create_task(flush_loop())
+
+    # Auto Size Calculator — периодически обновляем стаканы для топ-N спредов
+    await orderbook.start()
+
+    async def size_refresh_loop():
+        from core.orderbook import REFRESH_INTERVAL
+        while True:
+            try:
+                if _spreads_cache:
+                    await orderbook.refresh_for_spreads(_spreads_cache)
+            except Exception as e:
+                print(f"[OrderBook] refresh error: {e}")
+            await asyncio.sleep(REFRESH_INTERVAL)
+    asyncio.create_task(size_refresh_loop())
 
     for exch_name in EXCHANGES:
         connector_cls = CONNECTOR_REGISTRY.get(exch_name)

@@ -79,6 +79,13 @@ class SignalEngine:
         # Счётчик сигналов
         self._signal_count = 0
 
+        # Hook для трекера конвергенции (и других наблюдателей)
+        # Вызывается на каждой рассчитанной паре (symbol, buy_exch, sell_exch, gross, buy_price, sell_price)
+        self._on_pair = None
+
+    def set_on_pair(self, callback):
+        self._on_pair = callback
+
     # ------------------------------------------------------------------
     # Подписка на сигналы
     # ------------------------------------------------------------------
@@ -159,6 +166,13 @@ class SignalEngine:
         fee_sell = FEES.get(sell_exch, 0.04)
         total_fee = fee_buy + fee_sell
         net_spread_pct = gross_spread_pct - total_fee
+
+        # --- Hook для трекера конвергенции (и т.п.) ---
+        if self._on_pair:
+            try:
+                self._on_pair(symbol, buy_exch, sell_exch, gross_spread_pct, buy_price, sell_price)
+            except Exception:
+                pass
 
         # --- Z-score ---
         pair_key = f"{symbol}|{buy_exch}|{sell_exch}"

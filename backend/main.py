@@ -357,6 +357,21 @@ async def get_price_live(symbol: str):
     return result
 
 
+@app.get("/price-history/live/batch")
+async def get_price_live_batch(symbols: str):
+    result = {}
+    symbol_list = [symbol.strip().upper() for symbol in symbols.split(",") if symbol.strip()]
+
+    for symbol in dict.fromkeys(symbol_list):
+        live = price_store.get_live_candles(symbol)
+        fallback = _snapshot_symbol_candles(symbol)
+        for exchange, candle in fallback.items():
+            live.setdefault(exchange, candle)
+        result[symbol] = live
+
+    return result
+
+
 @app.get("/telegram/status")
 async def get_telegram_status():
     if not telegram:

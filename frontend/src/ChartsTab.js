@@ -5,6 +5,11 @@ import "./chartstab.css";
 const API = window.location.port === "3000"
   ? `${window.location.protocol}//${window.location.hostname}:8000`
   : window.location.origin;
+const EMPTY_ARRAY = [];
+const HISTORY_RETRY_DELAYS = [15000, 30000, 60000, 120000, 120000];
+const LIVE_POLL_INTERVAL = 5000;
+const HISTORY_CACHE_TTL_MS = 30000;
+const historyCache = new Map();
 
 const EX_COL = {
   binance: "#F0B90B", bybit: "#F7A600", mexc: "#00B897", bingx: "#60a5fa",
@@ -15,14 +20,61 @@ const EX_COL = {
 const TFS = ["1m", "5m", "15m", "30m", "1h", "4h"];
 const PER_PAGE = 6;
 
-function MiniChart({ symbol, tf, height, hiddenExchanges }) {
+function getHistoryCacheKey(symbol, tf) {
+  return `${symbol}|${tf}`;
+}
+
+function cloneHistoryData(data) {
+  return Object.fromEntries(
+    Object.entries(data).map(([exchange, candles]) => [exchange, candles.map(candle => ({ ...candle }))])
+  );
+}
+
+function readHistoryCache(symbol, tf) {
+  const entry = historyCache.get(getHistoryCacheKey(symbol, tf));
+  if (!entry || entry.expiresAt <= Date.now()) {
+    historyCache.delete(getHistoryCacheKey(symbol, tf));
+    return null;
+  }
+  return cloneHistoryData(entry.data);
+}
+
+function writeHistoryCache(symbol, tf, data) {
+  historyCache.set(getHistoryCacheKey(symbol, tf), {
+    data: cloneHistoryData(data),
+    expiresAt: Date.now() + HISTORY_CACHE_TTL_MS,
+  });
+}
+
+function mergeLiveCandleIntoHistory(data, exchange, candle) {
+  const next = cloneHistoryData(data);
+  const candles = next[exchange] ? [...next[exchange]] : [];
+  const existingIndex = candles.findIndex(item => item.t === candle.t);
+  const normalized = { ...candle };
+
+  if (existingIndex >= 0) {
+    candles[existingIndex] = { ...candles[existingIndex], ...normalized };
+  } else {
+    candles.push(normalized);
+    candles.sort((left, right) => left.t - right.t);
+  }
+
+  next[exchange] = candles;
+  return next;
+}
+
+function MiniChart({ symbol, tf, height, hiddenExchanges, liveData }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef({});
   const initDone = useRef(false);
+  const fetchAbortRef = useRef(null);
+  const retryTimeoutRef = useRef(null);
+  const retryAttemptRef = useRef(0);
   const [hidden, setHidden] = useState({});
   const [exchanges, setExchanges] = useState([]);
   const hiddenRef = useRef(hidden);
+  const hiddenExchangesKey = hiddenExchanges.join("|");
 
   useEffect(() => {
     hiddenRef.current = hidden;
@@ -140,72 +192,95 @@ function MiniChart({ symbol, tf, height, hiddenExchanges }) {
   // Full data load (on mount and tf change)
   useEffect(() => {
     if (!chartRef.current) return;
-    let active = true;
+    initDone.current = false;
+    retryAttemptRef.current = 0;
+    const cachedData = readHistoryCache(symbol, tf);
+
+    const clearRetry = () => {
+      if (retryTimeoutRef.current) {
+        clearTimeout(retryTimeoutRef.current);
+        retryTimeoutRef.current = null;
+      }
+    };
+
+    const scheduleRetry = () => {
+      clearRetry();
+      if (retryAttemptRef.current >= HISTORY_RETRY_DELAYS.length) {
+        return;
+      }
+      const delay = HISTORY_RETRY_DELAYS[retryAttemptRef.current];
+      retryAttemptRef.current += 1;
+      retryTimeoutRef.current = setTimeout(() => {
+        fullLoad();
+      }, delay);
+    };
 
     async function fullLoad() {
+      fetchAbortRef.current?.abort();
+      const controller = new AbortController();
+      fetchAbortRef.current = controller;
       try {
-        const r = await fetch(`${API}/price-history?symbol=${symbol}&tf=${tf}`);
+        const r = await fetch(`${API}/price-history?symbol=${symbol}&tf=${tf}`, { signal: controller.signal });
         const data = await r.json();
-        if (!active || !chartRef.current) return;
-        applyHistoryData(data);
+        if (controller.signal.aborted || !chartRef.current) return;
+        const seriesCount = applyHistoryData(data);
         // Mark initialized even when history is empty so live updates and retries can recover.
         initDone.current = true;
-      } catch {}
+        if (seriesCount > 0) {
+          writeHistoryCache(symbol, tf, data);
+          retryAttemptRef.current = 0;
+          clearRetry();
+        } else {
+          scheduleRetry();
+        }
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          scheduleRetry();
+        }
+      }
     }
 
-    fullLoad();
-
-    const retryId = setInterval(() => {
-      if (Object.keys(seriesRef.current).length === 0) {
-        fullLoad();
-      }
-    }, 15000);
+    if (cachedData) {
+      const cachedSeriesCount = applyHistoryData(cachedData);
+      initDone.current = cachedSeriesCount > 0;
+    } else {
+      fullLoad();
+    }
 
     return () => {
-      active = false;
-      clearInterval(retryId);
+      fetchAbortRef.current?.abort();
+      clearRetry();
     };
-  }, [symbol, tf, hiddenExchanges]);
+  }, [symbol, tf]);
 
-  // Live update every 5 seconds (only update last point, no re-create)
   useEffect(() => {
-    if (!chartRef.current) return;
-    let active = true;
+    if (!chartRef.current || !initDone.current || !liveData) return;
 
-    async function liveUpdate() {
-      if (!initDone.current || !active) return;
-      try {
-        const r = await fetch(`${API}/price-history/live?symbol=${symbol}`);
-        const live = await r.json();
-        if (!active) return;
+    Object.entries(liveData).forEach(([ex, candle]) => {
+      if (!candle) return;
 
-        Object.entries(live).forEach(([ex, candle]) => {
-          if (!candle) return;
+      let series = seriesRef.current[ex];
+      if (!series && chartRef.current) {
+        series = addSeries(chartRef.current, ex, [{ time: candle.t, value: candle.c }]);
+        setExchanges(prev => (prev.includes(ex) ? prev : [...prev, ex]));
+        chartRef.current.timeScale().fitContent();
+      }
 
-          let series = seriesRef.current[ex];
-          if (!series && chartRef.current) {
-            series = addSeries(chartRef.current, ex, [{ time: candle.t, value: candle.c }]);
-            setExchanges(prev => (prev.includes(ex) ? prev : [...prev, ex]));
-            chartRef.current.timeScale().fitContent();
-          }
-
-          if (series) {
-            series.update({ time: candle.t, value: candle.c });
-            series.applyOptions({ visible: !hiddenRef.current[ex] && !hiddenExchanges.includes(ex) });
-          }
-        });
-      } catch {}
-    }
-
-    const id = setInterval(liveUpdate, 5000);
-    return () => { active = false; clearInterval(id); };
-  }, [symbol, hiddenExchanges]);
+      if (series) {
+        series.update({ time: candle.t, value: candle.c });
+        const cached = readHistoryCache(symbol, tf);
+        if (cached) {
+          writeHistoryCache(symbol, tf, mergeLiveCandleIntoHistory(cached, ex, candle));
+        }
+      }
+    });
+  }, [liveData, symbol, tf]);
 
   useEffect(() => {
     Object.entries(seriesRef.current).forEach(([ex, series]) => {
       series.applyOptions({ visible: !hiddenRef.current[ex] && !hiddenExchanges.includes(ex) });
     });
-  }, [hiddenExchanges]);
+  }, [hiddenExchangesKey]);
 
   // Toggle visibility without re-fetch
   const toggleExch = ex => {
@@ -254,10 +329,11 @@ function MiniChart({ symbol, tf, height, hiddenExchanges }) {
   );
 }
 
-export default function ChartsTab({ spreads, hiddenExchanges = [] }) {
+export default function ChartsTab({ spreads, hiddenExchanges = EMPTY_ARRAY }) {
   const [tf, setTf] = useState("1m");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
+  const [liveSnapshots, setLiveSnapshots] = useState({});
 
   const symbols = spreads
     .map(s => s.symbol)
@@ -266,8 +342,48 @@ export default function ChartsTab({ spreads, hiddenExchanges = [] }) {
   const totalPages = Math.max(1, Math.ceil(symbols.length / PER_PAGE));
   const safePage = Math.min(page, totalPages - 1);
   const pageSymbols = symbols.slice(safePage * PER_PAGE, safePage * PER_PAGE + PER_PAGE);
+  const pageSymbolsKey = pageSymbols.join(",");
 
   useEffect(() => { setPage(0); }, [search]);
+
+  useEffect(() => {
+    if (!pageSymbolsKey) {
+      setLiveSnapshots({});
+      return;
+    }
+
+    let alive = true;
+    let currentController = null;
+
+    async function loadLiveBatch() {
+      currentController?.abort();
+      const controller = new AbortController();
+      currentController = controller;
+
+      try {
+        const response = await fetch(
+          `${API}/price-history/live/batch?symbols=${encodeURIComponent(pageSymbolsKey)}`,
+          { signal: controller.signal }
+        );
+        const data = await response.json();
+        if (!alive || controller.signal.aborted) return;
+        setLiveSnapshots(data);
+      } catch (error) {
+        if (error.name !== "AbortError" && alive) {
+          setLiveSnapshots({});
+        }
+      }
+    }
+
+    loadLiveBatch();
+    const intervalId = setInterval(loadLiveBatch, LIVE_POLL_INTERVAL);
+
+    return () => {
+      alive = false;
+      currentController?.abort();
+      clearInterval(intervalId);
+    };
+  }, [pageSymbolsKey]);
 
   return (
     <div className="charts-tab">
@@ -308,7 +424,14 @@ export default function ChartsTab({ spreads, hiddenExchanges = [] }) {
       ) : (
         <div className="charts-grid">
           {pageSymbols.map(sym => (
-            <MiniChart key={sym + tf} symbol={sym} tf={tf} height={280} hiddenExchanges={hiddenExchanges} />
+            <MiniChart
+              key={sym + tf}
+              symbol={sym}
+              tf={tf}
+              height={280}
+              hiddenExchanges={hiddenExchanges}
+              liveData={liveSnapshots[sym] || null}
+            />
           ))}
         </div>
       )}

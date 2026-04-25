@@ -9,6 +9,7 @@ from .base import BaseConnector
 
 CONN_BATCH = 120
 SUB_DELAY = 0.02
+SYNTHETIC_SPREAD = 0.0005
 
 
 class BingxConnector(BaseConnector):
@@ -35,6 +36,7 @@ class BingxConnector(BaseConnector):
 
     async def _connect_batch(self, symbols: list[str], batch_num: int, total: int):
         url = "wss://open-api-swap.bingx.com/swap-market"
+        unsupported_symbols: set[str] = set()
 
         while True:
             try:
@@ -48,7 +50,7 @@ class BingxConnector(BaseConnector):
                         await ws.send(json.dumps({
                             "id": symbol,
                             "reqType": "sub",
-                            "dataType": f"{self._convert_symbol(symbol)}@bookTicker",
+                            "dataType": f"{self._convert_symbol(symbol)}@ticker",
                         }))
                         await asyncio.sleep(SUB_DELAY)
 
@@ -80,16 +82,39 @@ class BingxConnector(BaseConnector):
                                     continue
 
                                 if data.get("code") not in (None, 0, "0"):
-                                    print(f"[BingX] subscription/message error batch {batch_num}: {data}")
+                                    symbol = data.get("id", "")
+                                    if data.get("code") == 80015 and symbol:
+                                        unsupported_symbols.add(symbol)
+                                        if len(unsupported_symbols) <= 5 or len(unsupported_symbols) % 50 == 0:
+                                            print(
+                                                f"[BingX] unsupported websocket symbols in batch {batch_num}: "
+                                                f"{len(unsupported_symbols)} latest={symbol}"
+                                            )
+                                    else:
+                                        print(f"[BingX] subscription/message error batch {batch_num}: {data}")
                                     continue
 
                                 ticker = data.get("data", {})
                                 if not ticker:
                                     continue
 
-                                symbol_raw = ticker.get("symbol", "")
-                                bid = ticker.get("bidPrice")
-                                ask = ticker.get("askPrice")
+                                symbol_raw = (
+                                    ticker.get("symbol")
+                                    or ticker.get("s")
+                                    or str(data.get("dataType", "")).split("@", 1)[0]
+                                )
+                                bid = (
+                                    ticker.get("bidPrice")
+                                    or ticker.get("bid1Price")
+                                    or ticker.get("bestBidPrice")
+                                    or ticker.get("bid")
+                                )
+                                ask = (
+                                    ticker.get("askPrice")
+                                    or ticker.get("ask1Price")
+                                    or ticker.get("bestAskPrice")
+                                    or ticker.get("ask")
+                                )
 
                                 if bid and ask and symbol_raw:
                                     self.on_price_update(
@@ -97,6 +122,24 @@ class BingxConnector(BaseConnector):
                                         self.name,
                                         float(bid),
                                         float(ask),
+                                    )
+                                    continue
+
+                                last_price = (
+                                    ticker.get("lastPrice")
+                                    or ticker.get("last")
+                                    or ticker.get("price")
+                                    or ticker.get("close")
+                                    or ticker.get("c")
+                                )
+                                if last_price and symbol_raw:
+                                    price = float(last_price)
+                                    half_spread = price * SYNTHETIC_SPREAD
+                                    self.on_price_update(
+                                        self._restore_symbol(symbol_raw),
+                                        self.name,
+                                        price - half_spread,
+                                        price + half_spread,
                                     )
                             except (gzip.BadGzipFile, json.JSONDecodeError):
                                 continue

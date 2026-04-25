@@ -119,6 +119,27 @@ def _build_fill_metrics(symbol: str, buy_exchange: str, sell_exchange: str, gros
     return max_size, fill_prob
 
 
+def _build_dex_reference(symbol: str, buy_price: float, sell_price: float) -> dict | None:
+    dex_entry = aggregator.prices.get(symbol.upper(), {}).get("dex")
+    if not dex_entry:
+        return None
+
+    bid = dex_entry.get("bid", 0)
+    ask = dex_entry.get("ask", 0)
+    if bid <= 0 or ask <= 0:
+        return None
+
+    dex_price = (bid + ask) / 2
+    cex_mid = (buy_price + sell_price) / 2
+    if cex_mid <= 0:
+        return None
+
+    return {
+        "dex_price": round(dex_price, 8),
+        "dex_spread_pct": round(((dex_price - cex_mid) / cex_mid) * 100, 4),
+    }
+
+
 def on_signal(signal: dict):
     symbol = signal.get("symbol", "").upper()
     if blacklist.is_blocked(symbol):
@@ -132,12 +153,20 @@ def on_signal(signal: dict):
     )
     signal["max_size_usd"] = round(max_size, 2)
     signal["fill_prob_pct"] = fill_prob
+    dex_reference = _build_dex_reference(
+        symbol,
+        signal.get("buy_price", 0),
+        signal.get("sell_price", 0),
+    )
+    if dex_reference:
+        signal.update(dex_reference)
 
     history.add(signal)
     signal_queue.put_nowait(signal)
 
     net_spread = signal.get("net_spread_pct", 0)
-    if telegram and net_spread >= MIN_TG_SPREAD:
+    is_dex_trade = "dex" in (signal.get("buy_on", ""), signal.get("sell_on", ""))
+    if telegram and not is_dex_trade and net_spread >= MIN_TG_SPREAD:
         telegram.on_signal(signal)
 
 
@@ -398,6 +427,9 @@ async def startup():
     print(f"  Blacklist: {len(blacklist.get_all())} symbols")
     print(f"  TG min spread: {MIN_TG_SPREAD}%")
     print("=" * 50)
+
+    for exchange in EXCHANGES:
+        health.register_exchange(exchange)
 
     asyncio.create_task(signal_sender())
     await orderbook.start()

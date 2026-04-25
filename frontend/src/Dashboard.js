@@ -445,6 +445,7 @@ function HealthTab({ data }) {
     <div className="health-grid">
       {data.map((h, idx) => {
         const c = h.status === "online" ? "#10b981" : h.status === "lagging" ? "#f59e0b" : "#ef4444";
+        const lastUpdate = h.last_update_sec == null ? "never" : `${h.last_update_sec}s`;
         return (
           <motion.div
             key={h.exchange}
@@ -459,7 +460,7 @@ function HealthTab({ data }) {
               <span className="health-status">{h.status}</span>
             </div>
             <div className="health-metrics">
-              <Metric l="Last update" v={`${h.last_update_sec}s`} h={h.last_update_sec < 10} />
+              <Metric l="Last update" v={lastUpdate} h={h.last_update_sec != null && h.last_update_sec < 10} />
               <Metric l="Pairs" v={h.symbols_active} />
               <Metric l="Upd/sec" v={h.updates_per_sec} h={h.updates_per_sec > 10} />
             </div>

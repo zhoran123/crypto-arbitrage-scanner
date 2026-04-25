@@ -155,6 +155,9 @@ class TelegramAlerter:
         z = s.get("z_score", 0)
         quality = s.get("quality", 0)
         fill_prob = s.get("fill_prob_pct")
+        max_size = s.get("max_size_usd")
+        dex_price = s.get("dex_price")
+        dex_spread = s.get("dex_spread_pct")
 
         # Заголовок по уровню
         if level == "critical":
@@ -181,8 +184,14 @@ class TelegramAlerter:
             f"\U0001f4ca Z-Score: {z:.1f}  |  \u2b50 Quality: {quality}/100",
         ])
 
+        if dex_price is not None and dex_spread is not None:
+            lines.append(f"DEX: <b>{float(dex_spread):+.3f}%</b> / ${float(dex_price):,.6f}")
+
+        if max_size is not None:
+            lines.append(f"Max size: <b>${float(max_size):,.0f}</b>")
+
         if fill_prob is not None:
-            lines.append(f"\U0001f3af Fill: <b>{float(fill_prob):.0f}%</b>")
+            lines.append(f"Fill: <b>{float(fill_prob):.0f}%</b>")
 
         if level == "critical":
             lines.extend(["", "\U0001f525 <b>EXCEPTIONAL OPPORTUNITY</b> \U0001f525"])

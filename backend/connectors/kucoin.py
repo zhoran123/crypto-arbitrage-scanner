@@ -1,13 +1,19 @@
-import asyncio, json, time, websockets, requests
+import asyncio
+import json
+import time
+
+import requests
+import websockets
+
 from .base import BaseConnector
 
 
+CONN_BATCH = 100
+SUB_BATCH = 20
+SUB_DELAY = 0.05
+
+
 class KucoinConnector(BaseConnector):
-    """
-    KuCoin Futures WebSocket.
-    Особенность: перед подключением нужен REST-запрос для токена.
-    Формат символа: BTCUSDTM (наш BTCUSDT + M).
-    """
     name = "kucoin"
 
     def get_fee(self):
@@ -15,60 +21,66 @@ class KucoinConnector(BaseConnector):
 
     @staticmethod
     def _convert_symbol(symbol: str) -> str:
-        """BTCUSDT → BTCUSDTM"""
+        if symbol.startswith("BTC"):
+            symbol = symbol.replace("BTC", "XBT", 1)
         return symbol + "M"
 
     @staticmethod
     def _restore_symbol(symbol: str) -> str:
-        """BTCUSDTM → BTCUSDT"""
         if symbol.endswith("M"):
-            return symbol[:-1]
-        return symbol
+            symbol = symbol[:-1]
+        return symbol.replace("XBT", "BTC", 1)
 
     def _get_ws_token(self):
-        """Получить токен и endpoint для WebSocket через REST API."""
-        resp = requests.post(
+        response = requests.post(
             "https://api-futures.kucoin.com/api/v1/bullet-public",
             timeout=10,
         )
-        data = resp.json().get("data", {})
+        data = response.json().get("data", {})
         token = data.get("token", "")
         servers = data.get("instanceServers", [])
         if not servers or not token:
-            raise Exception("Не удалось получить WS-токен от KuCoin")
-        endpoint = servers[0]["endpoint"]
-        ping_interval = servers[0].get("pingInterval", 18000)
-        return endpoint, token, ping_interval
+            raise RuntimeError("KuCoin did not return a websocket token")
+
+        server = servers[0]
+        return server["endpoint"], token, server.get("pingInterval", 18000)
 
     async def connect(self, symbols: list[str]):
+        batches = [symbols[i:i + CONN_BATCH] for i in range(0, len(symbols), CONN_BATCH)]
+        print(f"[KuCoin] {len(symbols)} pairs -> {len(batches)} connections")
+        await asyncio.gather(*[
+            self._connect_batch(batch, index + 1, len(batches))
+            for index, batch in enumerate(batches)
+        ])
+
+    async def _connect_batch(self, symbols: list[str], batch_num: int, total: int):
         while True:
             try:
-                # Шаг 1: получаем токен через REST
                 endpoint, token, ping_ms = self._get_ws_token()
                 connect_id = int(time.time() * 1000)
                 url = f"{endpoint}?token={token}&connectId={connect_id}"
 
                 async with websockets.connect(url) as ws:
-                    # Шаг 2: ждём welcome
-                    welcome = await asyncio.wait_for(ws.recv(), timeout=10)
+                    await asyncio.wait_for(ws.recv(), timeout=10)
 
-                    # Шаг 3: подписываемся на тикеры
-                    topics = ",".join(
-                        f"/contractMarket/tickerV2:{self._convert_symbol(s)}"
-                        for s in symbols
-                    )
-                    await ws.send(json.dumps({
-                        "id": connect_id,
-                        "type": "subscribe",
-                        "topic": topics,
-                        "privateChannel": False,
-                        "response": True,
-                    }))
+                    for index in range(0, len(symbols), SUB_BATCH):
+                        chunk = symbols[index:index + SUB_BATCH]
+                        topic = ",".join(
+                            f"/contractMarket/tickerV2:{self._convert_symbol(symbol)}"
+                            for symbol in chunk
+                        )
+                        await ws.send(json.dumps({
+                            "id": int(time.time() * 1000),
+                            "type": "subscribe",
+                            "topic": topic,
+                            "privateChannel": False,
+                            "response": True,
+                        }))
+                        await asyncio.sleep(SUB_DELAY)
 
-                    print(f"[KuCoin] подключён — {len(symbols)} пар")
+                    print(f"[KuCoin] connected batch {batch_num}/{total} ({len(symbols)} pairs)")
 
-                    # Шаг 4: ping по таймеру + чтение данных
-                    ping_sec = ping_ms / 1000 / 2  # пинг в 2 раза чаще
+                    ping_sec = ping_ms / 1000 / 2
 
                     async def pinger():
                         while True:
@@ -87,26 +99,32 @@ class KucoinConnector(BaseConnector):
                         async for raw in ws:
                             data = json.loads(raw)
 
+                            if data.get("type") == "error":
+                                print(f"[KuCoin] subscription/message error batch {batch_num}: {data}")
+                                continue
+
                             if data.get("type") != "message":
                                 continue
 
                             topic = data.get("topic", "")
-                            d = data.get("data", {})
+                            ticker = data.get("data", {})
+                            if "/contractMarket/tickerV2:" not in topic:
+                                continue
 
-                            if "/contractMarket/tickerV2:" in topic:
-                                symbol_raw = d.get("symbol", "")
-                                bid = d.get("bestBidPrice")
-                                ask = d.get("bestAskPrice")
+                            symbol_raw = ticker.get("symbol", "")
+                            bid = ticker.get("bestBidPrice")
+                            ask = ticker.get("bestAskPrice")
 
-                                if bid and ask and symbol_raw:
-                                    self.on_price_update(
-                                        self._restore_symbol(symbol_raw),
-                                        self.name,
-                                        float(bid), float(ask),
-                                    )
+                            if bid and ask and symbol_raw:
+                                self.on_price_update(
+                                    self._restore_symbol(symbol_raw),
+                                    self.name,
+                                    float(bid),
+                                    float(ask),
+                                )
                     finally:
                         ping_task.cancel()
 
-            except Exception as e:
-                print(f"[KuCoin] ошибка: {e} — реконнект через 3с")
+            except Exception as exc:
+                print(f"[KuCoin] batch {batch_num} error: {exc} - reconnect in 3s")
                 await asyncio.sleep(3)

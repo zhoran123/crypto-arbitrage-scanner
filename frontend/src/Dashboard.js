@@ -102,13 +102,16 @@ export default function Dashboard() {
 
   const hiddenSet = useMemo(() => new Set(hiddenExchanges), [hiddenExchanges]);
   const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
-  const visibleSpreads = useMemo(() => {
+  const sortedSpreads = useMemo(() => {
     return spreads
-      .filter(s => pairVisible(s, hiddenSet))
+      .slice()
       .sort((left, right) => (
         Number(favoriteSet.has(right.symbol)) - Number(favoriteSet.has(left.symbol))
       ));
-  }, [spreads, hiddenSet, favoriteSet]);
+  }, [spreads, favoriteSet]);
+  const visibleSpreads = useMemo(() => {
+    return sortedSpreads.filter(s => pairVisible(s, hiddenSet));
+  }, [sortedSpreads, hiddenSet]);
   const visibleHistory = useMemo(() => {
     return history.filter(s => pairVisible(s, hiddenSet));
   }, [history, hiddenSet]);
@@ -305,7 +308,7 @@ export default function Dashboard() {
         <AnimatePresence mode="wait">
           <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.2 }}>
             {tab === "spreads" && <SpreadsTab spreads={visibleSpreads} allSpreads={spreads} search={search} setSearch={setSearch} min={tblMin} setMin={setTblMin} onBlock={block} blocked={blacklist} favoriteSet={favoriteSet} onToggleFavorite={toggleFavorite} />}
-            {tab === "charts" && <ChartsTab spreads={visibleSpreads} hiddenExchanges={hiddenExchanges} favoriteSymbols={favorites} onToggleFavorite={toggleFavorite} />}
+            {tab === "charts" && <ChartsTab spreads={sortedSpreads} hiddenExchanges={hiddenExchanges} favoriteSymbols={favorites} onToggleFavorite={toggleFavorite} />}
             {tab === "signals" && (
               filtSig.length === 0
                 ? <Empty t="Waiting for signals..." d={`${stats?.price_updates?.toLocaleString() || 0} updates processed. Signals appear when spreads exceed thresholds.`} />

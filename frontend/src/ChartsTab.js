@@ -8,7 +8,7 @@ const API = window.location.port === "3000"
 const EMPTY_ARRAY = [];
 const HISTORY_RETRY_DELAYS = [15000, 30000, 60000, 120000, 120000];
 const LIVE_POLL_INTERVAL = 5000;
-const HISTORY_CACHE_TTL_MS = 30000;
+const HISTORY_CACHE_TTL_MS = 5 * 60 * 1000;
 const historyCache = new Map();
 
 const EX_COL = {

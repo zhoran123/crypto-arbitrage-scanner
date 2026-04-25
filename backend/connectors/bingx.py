@@ -4,6 +4,7 @@ import json
 
 import websockets
 
+from . import _fastjson
 from .base import BaseConnector
 
 
@@ -75,7 +76,7 @@ class BingxConnector(BaseConnector):
                                     await ws.send("Pong")
                                     continue
 
-                                data = json.loads(text)
+                                data = _fastjson.loads(text)
 
                                 if "ping" in data:
                                     await ws.send(json.dumps({"pong": data["ping"]}))

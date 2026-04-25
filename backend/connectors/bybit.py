@@ -1,4 +1,9 @@
-import asyncio, json, websockets
+import asyncio
+import json
+
+import websockets
+
+from . import _fastjson
 from .base import BaseConnector
 
 # Bybit: подписка по 10 аргументов за запрос, до 200 пар на соединение
@@ -43,7 +48,7 @@ class BybitConnector(BaseConnector):
                     print(f"[Bybit] подключён — батч {batch_num}/{total} ({len(symbols)} пар)")
 
                     async for raw in ws:
-                        data = json.loads(raw)
+                        data = _fastjson.loads(raw)
                         if data.get("topic", "").startswith("tickers."):
                             d = data.get("data", {})
                             bid = d.get("bid1Price")

@@ -4,6 +4,7 @@ import time
 
 import websockets
 
+from . import _fastjson
 from .base import BaseConnector
 
 
@@ -50,7 +51,7 @@ class GateConnector(BaseConnector):
                     print(f"[Gate.io] connected batch {batch_num}/{total} ({len(symbols)} pairs)")
 
                     async for raw in ws:
-                        data = json.loads(raw)
+                        data = _fastjson.loads(raw)
                         channel = data.get("channel", "")
                         event = data.get("event", "")
 

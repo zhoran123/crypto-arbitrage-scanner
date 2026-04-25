@@ -5,6 +5,7 @@ import time
 import requests
 import websockets
 
+from . import _fastjson
 from .base import BaseConnector
 
 
@@ -94,7 +95,7 @@ class KucoinConnector(BaseConnector):
 
                     try:
                         async for raw in ws:
-                            data = json.loads(raw)
+                            data = _fastjson.loads(raw)
 
                             if data.get("type") == "error":
                                 print(f"[KuCoin] subscription/message error batch {batch_num}: {data}")

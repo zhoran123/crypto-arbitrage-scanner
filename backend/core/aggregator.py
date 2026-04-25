@@ -53,16 +53,22 @@ class Aggregator:
     def update(self, symbol: str, exchange: str, bid: float, ask: float):
         """
         Коннектор вызывает этот метод при каждом обновлении цены.
-        Сохраняет bid/ask + текущее время в словарь.
+        Обновляет bid/ask/ts in-place — не создаёт новый dict на каждый тик
+        (GC-нагрузка при 30-60k тиков/сек была существенной).
         """
-        if symbol not in self.prices:
-            self.prices[symbol] = {}
+        symbol_prices = self.prices.get(symbol)
+        if symbol_prices is None:
+            symbol_prices = {}
+            self.prices[symbol] = symbol_prices
 
-        self.prices[symbol][exchange] = {
-            "bid": bid,
-            "ask": ask,
-            "ts": time.time(),
-        }
+        entry = symbol_prices.get(exchange)
+        now = time.time()
+        if entry is None:
+            symbol_prices[exchange] = {"bid": bid, "ask": ask, "ts": now}
+        else:
+            entry["bid"] = bid
+            entry["ask"] = ask
+            entry["ts"] = now
 
         self._update_count += 1
 

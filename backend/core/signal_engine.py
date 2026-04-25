@@ -51,33 +51,57 @@ class SignalEngine:
     def set_on_pair(self, callback):
         self._on_pair = callback
 
-    def on_price_update(self, symbol: str, prices_for_symbol: dict):
+    def on_price_update(self, symbol: str, prices_for_symbol: dict, updated_exchange: str | None = None):
+        """
+        Инкрементальная оценка: если задан updated_exchange — оцениваем
+        только пары, в которых эта биржа участвует (2*(N-1) пар вместо N*(N-1)).
+        Без updated_exchange — fallback на полный N² перебор.
+        """
         if not prices_for_symbol:
             return
-
-        exchanges = list(prices_for_symbol.keys())
-        if len(exchanges) < 2:
+        if len(prices_for_symbol) < 2:
             return
 
-        for sell_exchange in exchanges:
-            for buy_exchange in exchanges:
-                if sell_exchange == buy_exchange:
+        on_signal = self._on_signal
+
+        if updated_exchange is not None and updated_exchange in prices_for_symbol:
+            updated_data = prices_for_symbol[updated_exchange]
+            updated_bid = updated_data["bid"]
+            updated_ask = updated_data["ask"]
+
+            for other_exchange, other_data in prices_for_symbol.items():
+                if other_exchange == updated_exchange:
                     continue
+                other_bid = other_data["bid"]
+                other_ask = other_data["ask"]
 
-                sell_price = prices_for_symbol[sell_exchange]["bid"]
-                buy_price = prices_for_symbol[buy_exchange]["ask"]
-
-                signal = self._evaluate(
-                    symbol,
-                    buy_exchange,
-                    sell_exchange,
-                    buy_price,
-                    sell_price,
-                )
+                # Pair A: sell on updated, buy on other
+                signal = self._evaluate(symbol, other_exchange, updated_exchange, other_ask, updated_bid)
                 if signal:
                     self._signal_count += 1
-                    if self._on_signal:
-                        self._on_signal(signal)
+                    if on_signal:
+                        on_signal(signal)
+
+                # Pair B: sell on other, buy on updated
+                signal = self._evaluate(symbol, updated_exchange, other_exchange, updated_ask, other_bid)
+                if signal:
+                    self._signal_count += 1
+                    if on_signal:
+                        on_signal(signal)
+            return
+
+        # Fallback: full N² evaluation (used when triggering exchange unknown)
+        items = list(prices_for_symbol.items())
+        for sell_index, (sell_exchange, sell_data) in enumerate(items):
+            sell_price = sell_data["bid"]
+            for buy_index, (buy_exchange, buy_data) in enumerate(items):
+                if sell_index == buy_index:
+                    continue
+                signal = self._evaluate(symbol, buy_exchange, sell_exchange, buy_data["ask"], sell_price)
+                if signal:
+                    self._signal_count += 1
+                    if on_signal:
+                        on_signal(signal)
 
     def _evaluate(
         self,
@@ -109,7 +133,7 @@ class SignalEngine:
                 sell_price,
             )
 
-        pair_key = f"{symbol}|{buy_exchange}|{sell_exchange}"
+        pair_key = (symbol, buy_exchange, sell_exchange)
         z_score = self._update_zscore(pair_key, gross_spread_pct)
 
         if z_score < Z_THRESHOLD or gross_spread_pct < MIN_DEVIATION:
@@ -128,7 +152,7 @@ class SignalEngine:
             "timestamp": datetime.now(timezone.utc).isoformat(timespec="milliseconds"),
         }
 
-    def _update_zscore(self, pair_key: str, spread: float) -> float:
+    def _update_zscore(self, pair_key: tuple, spread: float) -> float:
         stats = self._spread_stats.get(pair_key)
         if stats is None:
             stats = _RunningStats(WINDOW)
@@ -148,7 +172,7 @@ class SignalEngine:
     def signal_count(self) -> int:
         return self._signal_count
 
-    def get_history_size(self, pair_key: str) -> int:
+    def get_history_size(self, pair_key: tuple) -> int:
         stats = self._spread_stats.get(pair_key)
         return stats.count if stats else 0
 

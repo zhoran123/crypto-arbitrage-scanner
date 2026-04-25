@@ -200,13 +200,20 @@ def on_price_update(symbol: str, exchange: str, bid: float, ask: float):
         return
     last_signal_eval[symbol] = now
 
-    prices = {
-        exch: data
-        for exch, data in (aggregator.get_prices(symbol) or {}).items()
-        if now - data.get("ts", 0) <= MAX_SIGNAL_PRICE_AGE
-    }
-    if prices:
-        engine.on_price_update(symbol, prices)
+    raw_prices = aggregator.get_prices(symbol)
+    if not raw_prices:
+        return
+
+    # Filter stale exchanges; pass triggering exchange so engine can do
+    # incremental pair evaluation (only pairs involving updated_exchange)
+    # instead of full N*(N-1) on every throttle-pass.
+    fresh: dict = {}
+    for exch, data in raw_prices.items():
+        if now - data["ts"] <= MAX_SIGNAL_PRICE_AGE:
+            fresh[exch] = data
+
+    if len(fresh) >= 2 and exchange in fresh:
+        engine.on_price_update(symbol, fresh, updated_exchange=exchange)
 
 
 def on_pair_evaluated(symbol: str, buy_exchange: str, sell_exchange: str, gross_spread: float, _buy_price: float, _sell_price: float):
@@ -254,7 +261,8 @@ async def get_prices():
 
 _spreads_cache: list = []
 _spreads_cache_ts: float = 0.0
-_SPREADS_TTL: float = 2.0
+_SPREADS_TTL: float = float(os.getenv("SPREADS_TTL", "5.0"))
+_SPREADS_FILL_TOP_N: int = int(os.getenv("SPREADS_FILL_TOP_N", "60"))
 
 
 def _compute_spreads() -> list:
@@ -301,20 +309,27 @@ def _compute_spreads() -> list:
                         "gross_spread": round(gross, 4),
                         "net_spread": round(net, 4),
                         "exchanges": len(exchanges),
+                        "max_size_usd": 0.0,
+                        "fill_prob_pct": 0.0,
                     }
 
         if best:
-            max_size, fill_prob = _build_fill_metrics(
-                symbol,
-                best["buy_on"],
-                best["sell_on"],
-                best["gross_spread"],
-            )
-            best["max_size_usd"] = round(max_size, 2)
-            best["fill_prob_pct"] = fill_prob
             result.append(best)
 
     result.sort(key=lambda item: item["net_spread"], reverse=True)
+
+    # Heavy fill_metrics only for top-N rows the user actually sees.
+    # Skips ~1500 -> ~60 invocations of orderbook lookup + probability model.
+    for item in result[:_SPREADS_FILL_TOP_N]:
+        max_size, fill_prob = _build_fill_metrics(
+            item["symbol"],
+            item["buy_on"],
+            item["sell_on"],
+            item["gross_spread"],
+        )
+        item["max_size_usd"] = round(max_size, 2)
+        item["fill_prob_pct"] = fill_prob
+
     return result
 
 

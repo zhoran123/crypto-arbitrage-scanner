@@ -11,19 +11,24 @@ class HealthMonitor:
 
     def on_update(self, exchange: str, symbol: str):
         now = time.time()
-        self._known_exchanges.add(exchange)
-        if exchange not in self._data:
-            self._data[exchange] = {
+        exchange_data = self._data.get(exchange)
+        if exchange_data is None:
+            self._known_exchanges.add(exchange)
+            exchange_data = {
                 "last_update": now,
                 "updates": 0,
                 "symbols": set(),
                 "first_seen": now,
             }
+            self._data[exchange] = exchange_data
 
-        exchange_data = self._data[exchange]
         exchange_data["last_update"] = now
         exchange_data["updates"] += 1
-        exchange_data["symbols"].add(symbol)
+        # Hot path: only touch the set when we see a new symbol. Avoids hashing
+        # ~50k times/sec for already-known (exchange, symbol) pairs.
+        symbols = exchange_data["symbols"]
+        if symbol not in symbols:
+            symbols.add(symbol)
 
     def get_status(self) -> list[dict]:
         exchanges = sorted(self._known_exchanges | set(self._data))

@@ -1,4 +1,9 @@
-import asyncio, json, websockets
+import asyncio
+import json
+
+import websockets
+
+from . import _fastjson
 from .base import BaseConnector
 
 
@@ -39,7 +44,7 @@ class MexcConnector(BaseConnector):
                     print(f"[MEXC] подключён — {len(symbols)} пар")
 
                     async for raw in ws:
-                        data = json.loads(raw)
+                        data = _fastjson.loads(raw)
                         channel = data.get("channel", "")
 
                         if channel == "push.ticker":

@@ -1,4 +1,9 @@
-import asyncio, json, websockets
+import asyncio
+import json
+
+import websockets
+
+from . import _fastjson
 from .base import BaseConnector
 
 
@@ -47,7 +52,7 @@ class OkxConnector(BaseConnector):
                             await ws.send("pong")
                             continue
 
-                        data = json.loads(text)
+                        data = _fastjson.loads(text)
 
                         if "data" in data and data.get("arg", {}).get("channel") == "tickers":
                             for d in data["data"]:

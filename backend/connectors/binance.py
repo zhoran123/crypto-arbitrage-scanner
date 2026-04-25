@@ -1,4 +1,7 @@
-import asyncio, json, websockets
+import asyncio
+import websockets
+
+from . import _fastjson
 from .base import BaseConnector
 
 # Binance лимит: ~200 потоков на одно WS-соединение
@@ -35,7 +38,7 @@ class BinanceConnector(BaseConnector):
                 async with websockets.connect(url, ping_interval=20) as ws:
                     print(f"[Binance] подключён — батч {batch_num}/{total} ({len(symbols)} пар)")
                     async for raw in ws:
-                        data = json.loads(raw).get("data", {})
+                        data = _fastjson.loads(raw).get("data", {})
                         if "b" in data and "a" in data:
                             self.on_price_update(
                                 data["s"], self.name,

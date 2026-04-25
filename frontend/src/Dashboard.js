@@ -204,8 +204,10 @@ export default function Dashboard() {
     return () => { active = false; clearInterval(id); };
   }, [tab]);
 
+  // 10s tick is enough for "Xs ago / Xm ago" labels — 1s caused a full Dashboard
+  // rerender every second (charts/tables/animations) for very little visual gain.
   const [, setTick] = useState(0);
-  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 1000); return () => clearInterval(id); }, []);
+  useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 10000); return () => clearInterval(id); }, []);
 
   const block = async sym => {
     setBL(p => [...p, sym.toUpperCase()].sort());

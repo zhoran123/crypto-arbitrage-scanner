@@ -345,13 +345,41 @@ export default function ChartsTab({ spreads, hiddenExchanges = EMPTY_ARRAY, favo
   const [liveSnapshots, setLiveSnapshots] = useState({});
   const favoriteSet = useMemo(() => new Set(favoriteSymbols), [favoriteSymbols]);
 
+  // Stable symbol order: re-rank from /spreads only when search/favorites/tf change
+  // OR when the current top symbols disappear from the universe. Within a session
+  // on the Charts tab, the chart cards therefore do NOT remount on every poll.
+  const stableSymbolsRef = useRef([]);
+  const stableInputRef = useRef("");
+  const stableInputKey = `${search}|${tf}|${[...favoriteSet].sort().join(",")}`;
+
   const symbols = useMemo(() => {
     const searchTerm = search.toLowerCase().replace(/[/usdt]/gi, "");
-    return spreads
+    const universe = spreads
       .map(s => s.symbol)
-      .filter(symbol => !searchTerm || symbol.toLowerCase().includes(searchTerm))
+      .filter(symbol => !searchTerm || symbol.toLowerCase().includes(searchTerm));
+    const universeSet = new Set(universe);
+
+    if (stableInputRef.current !== stableInputKey || stableSymbolsRef.current.length === 0) {
+      const fresh = universe
+        .slice()
+        .sort((left, right) => Number(favoriteSet.has(right)) - Number(favoriteSet.has(left)));
+      stableSymbolsRef.current = fresh;
+      stableInputRef.current = stableInputKey;
+      return fresh;
+    }
+
+    // Keep current order, drop symbols that left the universe, append new ones at the end
+    const kept = stableSymbolsRef.current.filter(sym => universeSet.has(sym));
+    const known = new Set(kept);
+    const newcomers = universe.filter(sym => !known.has(sym));
+    if (newcomers.length === 0 && kept.length === stableSymbolsRef.current.length) {
+      return stableSymbolsRef.current;
+    }
+    const merged = [...kept, ...newcomers]
       .sort((left, right) => Number(favoriteSet.has(right)) - Number(favoriteSet.has(left)));
-  }, [spreads, search, favoriteSet]);
+    stableSymbolsRef.current = merged;
+    return merged;
+  }, [spreads, search, favoriteSet, stableInputKey]);
 
   const totalPages = Math.max(1, Math.ceil(symbols.length / PER_PAGE));
   const safePage = Math.min(page, totalPages - 1);

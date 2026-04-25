@@ -1,4 +1,9 @@
-import asyncio, json, websockets
+import asyncio
+import json
+
+import websockets
+
+from . import _fastjson
 from .base import BaseConnector
 
 
@@ -41,7 +46,7 @@ class BitgetConnector(BaseConnector):
                             await ws.send("pong")
                             continue
 
-                        data = json.loads(text)
+                        data = _fastjson.loads(text)
                         action = data.get("action", "")
 
                         if action == "snapshot" or action == "update":

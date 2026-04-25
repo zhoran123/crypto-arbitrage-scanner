@@ -54,6 +54,9 @@ fill_probability = FillProbabilityModel()
 tg_token = os.getenv("TELEGRAM_BOT_TOKEN", "")
 tg_chat = os.getenv("TELEGRAM_CHAT_ID", "")
 tg_cooldown = float(os.getenv("TELEGRAM_COOLDOWN", "30"))
+SIGNAL_EVAL_INTERVAL = float(os.getenv("SIGNAL_EVAL_INTERVAL", "1.0"))
+PRICE_SAMPLE_INTERVAL = float(os.getenv("PRICE_SAMPLE_INTERVAL", "1.0"))
+MAX_SIGNAL_PRICE_AGE = float(os.getenv("MAX_SIGNAL_PRICE_AGE", "5.0"))
 
 telegram: TelegramAlerter | None = None
 if tg_token and tg_chat:
@@ -63,6 +66,8 @@ else:
     print("[Telegram] alerts disabled - fill backend/.env to enable")
 
 connected_clients: list[WebSocket] = []
+last_signal_eval: dict[str, float] = {}
+last_price_sample: dict[tuple[str, str], float] = {}
 
 CONNECTOR_REGISTRY = {
     "binance": BinanceConnector,
@@ -180,12 +185,26 @@ async def signal_sender():
 
 
 def on_price_update(symbol: str, exchange: str, bid: float, ask: float):
+    now = time.time()
+    symbol = symbol.upper()
     health.on_update(exchange, symbol)
     aggregator.update(symbol, exchange, bid, ask)
-    price_store.on_price(symbol, exchange, bid, ask)
-    fill_probability.on_price(symbol, exchange, bid, ask)
 
-    prices = aggregator.get_prices(symbol)
+    sample_key = (symbol, exchange)
+    if now - last_price_sample.get(sample_key, 0.0) >= PRICE_SAMPLE_INTERVAL:
+        last_price_sample[sample_key] = now
+        price_store.on_price(symbol, exchange, bid, ask)
+        fill_probability.on_price(symbol, exchange, bid, ask)
+
+    if now - last_signal_eval.get(symbol, 0.0) < SIGNAL_EVAL_INTERVAL:
+        return
+    last_signal_eval[symbol] = now
+
+    prices = {
+        exch: data
+        for exch, data in (aggregator.get_prices(symbol) or {}).items()
+        if now - data.get("ts", 0) <= MAX_SIGNAL_PRICE_AGE
+    }
     if prices:
         engine.on_price_update(symbol, prices)
 

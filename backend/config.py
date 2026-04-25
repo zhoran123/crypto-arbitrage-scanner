@@ -48,6 +48,7 @@ MIN_DEVIATION = 0.3
 WINDOW = 50
 
 MIN_TG_SPREAD = float(os.getenv("MIN_TG_SPREAD", "0.5"))
+MAX_SIGNAL_SPREAD = float(os.getenv("MAX_SIGNAL_SPREAD", "25"))
 
 FEES = {
     "binance": 0.04,

@@ -3,7 +3,7 @@ from collections import deque
 from datetime import datetime, timezone
 from typing import Optional
 
-from config import FEES, MIN_DEVIATION, WINDOW, Z_THRESHOLD
+from config import FEES, MAX_SIGNAL_SPREAD, MIN_DEVIATION, WINDOW, Z_THRESHOLD
 
 
 class _RunningStats:
@@ -92,6 +92,9 @@ class SignalEngine:
 
         gross_spread_pct = ((sell_price - buy_price) / buy_price) * 100
         net_spread_pct = gross_spread_pct - FEES.get(buy_exchange, 0.04) - FEES.get(sell_exchange, 0.04)
+
+        if gross_spread_pct > MAX_SIGNAL_SPREAD or net_spread_pct > MAX_SIGNAL_SPREAD:
+            return None
 
         if "dex" in (buy_exchange, sell_exchange) and gross_spread_pct > 50:
             return None

@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from alerts.telegram import TelegramAlerter
-from config import EXCHANGES, FEES, MIN_TG_SPREAD, load_symbols
+from config import EXCHANGES, FEES, MAX_SIGNAL_SPREAD, MIN_TG_SPREAD, load_symbols
 from connectors.binance import BinanceConnector
 from connectors.bingx import BingxConnector
 from connectors.bitget import BitgetConnector
@@ -145,6 +145,10 @@ def on_signal(signal: dict):
     if blacklist.is_blocked(symbol):
         return
 
+    net_spread = signal.get("net_spread_pct", 0)
+    if net_spread > MAX_SIGNAL_SPREAD or signal.get("deviation_pct", 0) > MAX_SIGNAL_SPREAD:
+        return
+
     max_size, fill_prob = _build_fill_metrics(
         symbol,
         signal.get("buy_on", ""),
@@ -164,7 +168,6 @@ def on_signal(signal: dict):
     history.add(signal)
     signal_queue.put_nowait(signal)
 
-    net_spread = signal.get("net_spread_pct", 0)
     is_dex_trade = "dex" in (signal.get("buy_on", ""), signal.get("sell_on", ""))
     if telegram and not is_dex_trade and net_spread >= MIN_TG_SPREAD:
         telegram.on_signal(signal)
@@ -188,6 +191,8 @@ def on_price_update(symbol: str, exchange: str, bid: float, ask: float):
 
 
 def on_pair_evaluated(symbol: str, buy_exchange: str, sell_exchange: str, gross_spread: float, _buy_price: float, _sell_price: float):
+    if gross_spread > MAX_SIGNAL_SPREAD:
+        return
     if "dex" in (buy_exchange, sell_exchange) and gross_spread > 50:
         return
     fill_probability.track_spread(symbol, buy_exchange, sell_exchange, gross_spread)
@@ -264,6 +269,8 @@ def _compute_spreads() -> list:
                     continue
 
                 net = gross - FEES.get(buy_exchange, 0.05) - FEES.get(sell_exchange, 0.05)
+                if gross > MAX_SIGNAL_SPREAD or net > MAX_SIGNAL_SPREAD:
+                    continue
                 if net > best_net:
                     best_net = net
                     best = {

@@ -63,7 +63,7 @@ function mergeLiveCandleIntoHistory(data, exchange, candle) {
   return next;
 }
 
-function MiniChart({ symbol, tf, height, hiddenExchanges, liveData }) {
+function MiniChart({ symbol, tf, height, hiddenExchanges, liveData, isFavorite, onToggleFavorite }) {
   const containerRef = useRef(null);
   const chartRef = useRef(null);
   const seriesRef = useRef({});
@@ -295,6 +295,15 @@ function MiniChart({ symbol, tf, height, hiddenExchanges, liveData }) {
   return (
     <div className="charts-card">
       <div className="charts-card-header">
+        <button
+          type="button"
+          onClick={() => onToggleFavorite(symbol)}
+          className={`charts-fav-btn${isFavorite ? " is-active" : ""}`}
+          title={isFavorite ? "Remove from favorites" : "Add to favorites"}
+          aria-label={isFavorite ? "Remove from favorites" : "Add to favorites"}
+        >
+          {isFavorite ? "\u2605" : "\u2606"}
+        </button>
         <span className="charts-card-symbol">
           {symbol.replace("USDT", "")}
           <span className="charts-card-suffix">/USDT</span>
@@ -329,15 +338,17 @@ function MiniChart({ symbol, tf, height, hiddenExchanges, liveData }) {
   );
 }
 
-export default function ChartsTab({ spreads, hiddenExchanges = EMPTY_ARRAY }) {
+export default function ChartsTab({ spreads, hiddenExchanges = EMPTY_ARRAY, favoriteSymbols = EMPTY_ARRAY, onToggleFavorite = () => {} }) {
   const [tf, setTf] = useState("1m");
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [liveSnapshots, setLiveSnapshots] = useState({});
+  const favoriteSet = new Set(favoriteSymbols);
 
   const symbols = spreads
     .map(s => s.symbol)
-    .filter(s => !search || s.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, "")));
+    .filter(s => !search || s.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, "")))
+    .sort((left, right) => Number(favoriteSet.has(right)) - Number(favoriteSet.has(left)));
 
   const totalPages = Math.max(1, Math.ceil(symbols.length / PER_PAGE));
   const safePage = Math.min(page, totalPages - 1);
@@ -431,6 +442,8 @@ export default function ChartsTab({ spreads, hiddenExchanges = EMPTY_ARRAY }) {
               height={280}
               hiddenExchanges={hiddenExchanges}
               liveData={liveSnapshots[sym] || null}
+              isFavorite={favoriteSet.has(sym)}
+              onToggleFavorite={onToggleFavorite}
             />
           ))}
         </div>

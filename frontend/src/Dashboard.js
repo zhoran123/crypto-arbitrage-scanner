@@ -25,6 +25,9 @@ const EX_COL = {
 };
 
 const ALL_EXCHANGES = ["binance", "bybit", "okx", "bitget", "gate", "mexc", "bingx", "kucoin", "dex"];
+const FAVORITES_STORAGE_KEY = "fa_favorite_symbols";
+const DEFAULT_SIGNAL_MIN_SPREAD = 5;
+const NET_SPREAD_FILTER_MAX = 25;
 const EX_LABEL = {
   binance: "BIN",
   bybit: "BYB",
@@ -65,6 +68,10 @@ function pairVisible(item, hiddenSet) {
   return !hiddenSet.has(item.buy_on) && !hiddenSet.has(item.sell_on);
 }
 
+function normalizeSearch(value) {
+  return value.toLowerCase().replace(/[/usdt]/gi, "");
+}
+
 export default function Dashboard() {
   const [signals, setSignals] = useState([]);
   const [wsStatus, setWsStatus] = useState("connecting");
@@ -77,8 +84,15 @@ export default function Dashboard() {
   const [tab, setTab] = useState("spreads");
   const [search, setSearch] = useState("");
   const [tblMin, setTblMin] = useState(-1);
-  const [sigMin, setSigMin] = useState(0);
+  const [sigMin, setSigMin] = useState(DEFAULT_SIGNAL_MIN_SPREAD);
   const [showF, setShowF] = useState(false);
+  const [favorites, setFavorites] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(FAVORITES_STORAGE_KEY) || "[]");
+      return Array.isArray(saved) ? saved : [];
+    }
+    catch { return []; }
+  });
   const [hiddenExchanges, setHiddenExchanges] = useState(() => {
     try { return JSON.parse(localStorage.getItem("fa_hidden_exchanges") || "[]"); }
     catch { return []; }
@@ -87,7 +101,11 @@ export default function Dashboard() {
   const rcRef = useRef(null);
 
   const hiddenSet = new Set(hiddenExchanges);
-  const visibleSpreads = spreads.filter(s => pairVisible(s, hiddenSet));
+  const favoriteSet = new Set(favorites);
+  const sortFavoritesFirst = items => [...items].sort((left, right) => (
+    Number(favoriteSet.has(right.symbol)) - Number(favoriteSet.has(left.symbol))
+  ));
+  const visibleSpreads = sortFavoritesFirst(spreads.filter(s => pairVisible(s, hiddenSet)));
   const visibleHistory = history.filter(s => pairVisible(s, hiddenSet));
   const visibleHealth = health.filter(h => !hiddenSet.has(h.exchange));
   const filtSig = signals.filter(s =>
@@ -96,6 +114,17 @@ export default function Dashboard() {
     && s.sell_on !== "dex"
     && pairVisible(s, hiddenSet)
   );
+
+  const toggleFavorite = useCallback(symbol => {
+    const normalized = symbol.toUpperCase();
+    setFavorites(prev => {
+      const next = prev.includes(normalized)
+        ? prev.filter(item => item !== normalized)
+        : [normalized, ...prev];
+      try { localStorage.setItem(FAVORITES_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }, []);
 
   const toggleExchange = useCallback(exchange => {
     setHiddenExchanges(prev => {
@@ -258,7 +287,7 @@ export default function Dashboard() {
         {tab === "signals" && showF && (
           <motion.div className="filter-bar" initial={{ height: 0, opacity: 0 }} animate={{ height: "auto", opacity: 1 }} exit={{ height: 0, opacity: 0 }} transition={{ duration: 0.2 }}>
             <div className="filter-inner">
-              <Slider l="MIN NET SPREAD" v={sigMin} set={setSigMin} min={0} max={5} step={0.1} fmt={v => v.toFixed(1) + "%"} />
+              <Slider l="MIN NET SPREAD" v={sigMin} set={setSigMin} min={0} max={NET_SPREAD_FILTER_MAX} step={0.1} fmt={v => v.toFixed(1) + "%"} />
             </div>
           </motion.div>
         )}
@@ -266,8 +295,8 @@ export default function Dashboard() {
       <main className="dash-main">
         <AnimatePresence mode="wait">
           <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.2 }}>
-            {tab === "spreads" && <SpreadsTab spreads={visibleSpreads} allSpreads={spreads} search={search} setSearch={setSearch} min={tblMin} setMin={setTblMin} onBlock={block} blocked={blacklist} />}
-            {tab === "charts" && <ChartsTab spreads={visibleSpreads} hiddenExchanges={hiddenExchanges} />}
+            {tab === "spreads" && <SpreadsTab spreads={visibleSpreads} allSpreads={spreads} search={search} setSearch={setSearch} min={tblMin} setMin={setTblMin} onBlock={block} blocked={blacklist} favoriteSet={favoriteSet} onToggleFavorite={toggleFavorite} />}
+            {tab === "charts" && <ChartsTab spreads={visibleSpreads} hiddenExchanges={hiddenExchanges} favoriteSymbols={favorites} onToggleFavorite={toggleFavorite} />}
             {tab === "signals" && (
               filtSig.length === 0
                 ? <Empty t="Waiting for signals..." d={`${stats?.price_updates?.toLocaleString() || 0} updates processed. Signals appear when spreads exceed thresholds.`} />
@@ -367,9 +396,9 @@ function Metric({ l, v, h }) {
   );
 }
 
-function SpreadsTab({ spreads, allSpreads, search, setSearch, min, setMin, onBlock, blocked }) {
+function SpreadsTab({ spreads, allSpreads, search, setSearch, min, setMin, onBlock, blocked, favoriteSet, onToggleFavorite }) {
   const f = spreads.filter(s => {
-    if (search && !s.symbol.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, ""))) return false;
+    if (search && !s.symbol.toLowerCase().includes(normalizeSearch(search))) return false;
     return s.net_spread >= min;
   });
   return (
@@ -382,7 +411,7 @@ function SpreadsTab({ spreads, allSpreads, search, setSearch, min, setMin, onBlo
           <input type="text" placeholder="Search pair..." value={search} onChange={e => setSearch(e.target.value)} className="search-input" />
           {search && <button onClick={() => setSearch("")} className="search-clear">&times;</button>}
         </div>
-        <Slider l="MIN NET SPREAD" v={min} set={setMin} min={-1} max={5} step={0.1} fmt={v => v.toFixed(1) + "%"} />
+        <Slider l="MIN NET SPREAD" v={min} set={setMin} min={-1} max={NET_SPREAD_FILTER_MAX} step={0.1} fmt={v => v.toFixed(1) + "%"} />
         <div className="spreads-count">
           {f.length} shown &middot; <span className="spreads-profitable">{allSpreads.filter(s => s.net_spread > 0).length} profitable</span>
         </div>
@@ -408,6 +437,15 @@ function SpreadsTab({ spreads, allSpreads, search, setSearch, min, setMin, onBlo
                 <tr key={s.symbol} className={i % 2 === 0 ? "tbl-row--even" : "tbl-row--odd"}>
                   <td className="td td--muted">{i + 1}</td>
                   <td className="td td--left">
+                    <button
+                      type="button"
+                      onClick={() => onToggleFavorite(s.symbol)}
+                      className={`fav-btn${favoriteSet.has(s.symbol) ? " fav-btn--active" : ""}`}
+                      title={favoriteSet.has(s.symbol) ? "Remove from favorites" : "Add to favorites"}
+                      aria-label={favoriteSet.has(s.symbol) ? "Remove from favorites" : "Add to favorites"}
+                    >
+                      {favoriteSet.has(s.symbol) ? "\u2605" : "\u2606"}
+                    </button>
                     <span className="tbl-symbol">{s.symbol.replace("USDT", "")}</span>
                     <span className="tbl-suffix">/USDT</span>
                   </td>

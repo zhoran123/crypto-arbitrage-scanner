@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from "react";
+import React, { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import Nav from "./Nav";
 import ChartsTab from "./ChartsTab";
@@ -100,20 +100,29 @@ export default function Dashboard() {
   const wsRef = useRef(null);
   const rcRef = useRef(null);
 
-  const hiddenSet = new Set(hiddenExchanges);
-  const favoriteSet = new Set(favorites);
-  const sortFavoritesFirst = items => [...items].sort((left, right) => (
-    Number(favoriteSet.has(right.symbol)) - Number(favoriteSet.has(left.symbol))
-  ));
-  const visibleSpreads = sortFavoritesFirst(spreads.filter(s => pairVisible(s, hiddenSet)));
-  const visibleHistory = history.filter(s => pairVisible(s, hiddenSet));
-  const visibleHealth = health.filter(h => !hiddenSet.has(h.exchange));
-  const filtSig = signals.filter(s =>
-    s.net_spread_pct >= sigMin
-    && s.buy_on !== "dex"
-    && s.sell_on !== "dex"
-    && pairVisible(s, hiddenSet)
-  );
+  const hiddenSet = useMemo(() => new Set(hiddenExchanges), [hiddenExchanges]);
+  const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
+  const visibleSpreads = useMemo(() => {
+    return spreads
+      .filter(s => pairVisible(s, hiddenSet))
+      .sort((left, right) => (
+        Number(favoriteSet.has(right.symbol)) - Number(favoriteSet.has(left.symbol))
+      ));
+  }, [spreads, hiddenSet, favoriteSet]);
+  const visibleHistory = useMemo(() => {
+    return history.filter(s => pairVisible(s, hiddenSet));
+  }, [history, hiddenSet]);
+  const visibleHealth = useMemo(() => {
+    return health.filter(h => !hiddenSet.has(h.exchange));
+  }, [health, hiddenSet]);
+  const filtSig = useMemo(() => {
+    return signals.filter(s =>
+      s.net_spread_pct >= sigMin
+      && s.buy_on !== "dex"
+      && s.sell_on !== "dex"
+      && pairVisible(s, hiddenSet)
+    );
+  }, [signals, sigMin, hiddenSet]);
 
   const toggleFavorite = useCallback(symbol => {
     const normalized = symbol.toUpperCase();

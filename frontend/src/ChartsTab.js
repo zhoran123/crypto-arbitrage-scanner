@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from "react";
+import React, { useState, useEffect, useRef, useMemo } from "react";
 import { createChart, CrosshairMode, LineStyle, LineSeries } from "lightweight-charts";
 import "./chartstab.css";
 
@@ -343,12 +343,15 @@ export default function ChartsTab({ spreads, hiddenExchanges = EMPTY_ARRAY, favo
   const [search, setSearch] = useState("");
   const [page, setPage] = useState(0);
   const [liveSnapshots, setLiveSnapshots] = useState({});
-  const favoriteSet = new Set(favoriteSymbols);
+  const favoriteSet = useMemo(() => new Set(favoriteSymbols), [favoriteSymbols]);
 
-  const symbols = spreads
-    .map(s => s.symbol)
-    .filter(s => !search || s.toLowerCase().includes(search.toLowerCase().replace(/[/usdt]/gi, "")))
-    .sort((left, right) => Number(favoriteSet.has(right)) - Number(favoriteSet.has(left)));
+  const symbols = useMemo(() => {
+    const searchTerm = search.toLowerCase().replace(/[/usdt]/gi, "");
+    return spreads
+      .map(s => s.symbol)
+      .filter(symbol => !searchTerm || symbol.toLowerCase().includes(searchTerm))
+      .sort((left, right) => Number(favoriteSet.has(right)) - Number(favoriteSet.has(left)));
+  }, [spreads, search, favoriteSet]);
 
   const totalPages = Math.max(1, Math.ceil(symbols.length / PER_PAGE));
   const safePage = Math.min(page, totalPages - 1);

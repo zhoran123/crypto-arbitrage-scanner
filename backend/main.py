@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from alerts.telegram import TelegramAlerter
-from config import EXCHANGES, FEES, MIN_TG_SPREAD, SYMBOLS, load_symbols
+from config import EXCHANGES, FEES, MIN_TG_SPREAD, load_symbols
 from connectors.binance import BinanceConnector
 from connectors.bingx import BingxConnector
 from connectors.bitget import BitgetConnector
@@ -471,8 +471,16 @@ async def startup():
         else:
             connector = connector_cls(on_price_update=on_price_update)
 
-        asyncio.create_task(connector.connect(config.SYMBOLS))
-        print(f"[+] {exchange} started")
+        connector_symbols = config.SYMBOLS
+        if exchange != "dex":
+            connector_symbols = config.EXCHANGE_SYMBOLS.get(exchange, config.SYMBOLS)
+
+        if not connector_symbols:
+            print(f"[!] {exchange} has no symbols after exchange filtering")
+            continue
+
+        asyncio.create_task(connector.connect(connector_symbols))
+        print(f"[+] {exchange} started ({len(connector_symbols)} symbols)")
 
     print()
     print("Server ready: http://localhost:8000")

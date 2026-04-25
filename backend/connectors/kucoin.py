@@ -9,7 +9,7 @@ from .base import BaseConnector
 
 
 CONN_BATCH = 100
-SUB_BATCH = 20
+SUB_BATCH = 1
 SUB_DELAY = 0.05
 
 
@@ -64,11 +64,8 @@ class KucoinConnector(BaseConnector):
                     await asyncio.wait_for(ws.recv(), timeout=10)
 
                     for index in range(0, len(symbols), SUB_BATCH):
-                        chunk = symbols[index:index + SUB_BATCH]
-                        topic = ",".join(
-                            f"/contractMarket/tickerV2:{self._convert_symbol(symbol)}"
-                            for symbol in chunk
-                        )
+                        symbol = symbols[index]
+                        topic = f"/contractMarket/tickerV2:{self._convert_symbol(symbol)}"
                         await ws.send(json.dumps({
                             "id": int(time.time() * 1000),
                             "type": "subscribe",
@@ -111,7 +108,7 @@ class KucoinConnector(BaseConnector):
                             if "/contractMarket/tickerV2:" not in topic:
                                 continue
 
-                            symbol_raw = ticker.get("symbol", "")
+                            symbol_raw = ticker.get("symbol", "") or topic.rsplit(":", 1)[-1]
                             bid = ticker.get("bestBidPrice")
                             ask = ticker.get("bestAskPrice")
 

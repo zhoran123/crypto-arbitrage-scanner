@@ -57,7 +57,7 @@ tg_cooldown = float(os.getenv("TELEGRAM_COOLDOWN", "30"))
 SIGNAL_EVAL_INTERVAL = float(os.getenv("SIGNAL_EVAL_INTERVAL", "1.0"))
 PRICE_SAMPLE_INTERVAL = float(os.getenv("PRICE_SAMPLE_INTERVAL", "1.0"))
 MAX_SIGNAL_PRICE_AGE = float(os.getenv("MAX_SIGNAL_PRICE_AGE", "5.0"))
-MIN_TG_MAX_SIZE_USD = float(os.getenv("MIN_TG_MAX_SIZE_USD", "1.0"))
+MIN_TG_MAX_SIZE_USD = float(os.getenv("MIN_TG_MAX_SIZE_USD", "30.0"))
 
 telegram: TelegramAlerter | None = None
 if tg_token and tg_chat:

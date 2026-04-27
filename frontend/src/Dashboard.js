@@ -26,6 +26,7 @@ const EX_COL = {
 
 const ALL_EXCHANGES = ["binance", "bybit", "okx", "bitget", "gate", "mexc", "bingx", "kucoin", "dex"];
 const FAVORITES_STORAGE_KEY = "fa_favorite_symbols";
+const BLACKLIST_STORAGE_KEY = "fa_blacklist_symbols";
 const DEFAULT_SIGNAL_MIN_SPREAD = 5;
 const NET_SPREAD_FILTER_MAX = 25;
 const EX_LABEL = {
@@ -68,6 +69,10 @@ function pairVisible(item, hiddenSet) {
   return !hiddenSet.has(item.buy_on) && !hiddenSet.has(item.sell_on);
 }
 
+function symbolAllowed(item, blacklistSet) {
+  return !blacklistSet.has(item.symbol?.toUpperCase());
+}
+
 function normalizeSearch(value) {
   return value.toLowerCase().replace(/[/usdt]/gi, "");
 }
@@ -80,7 +85,13 @@ export default function Dashboard() {
   const [health, setHealth] = useState([]);
   const [history, setHistory] = useState([]);
   const [hStats, setHStats] = useState(null);
-  const [blacklist, setBL] = useState([]);
+  const [blacklist, setBL] = useState(() => {
+    try {
+      const saved = JSON.parse(localStorage.getItem(BLACKLIST_STORAGE_KEY) || "[]");
+      return Array.isArray(saved) ? saved : [];
+    }
+    catch { return []; }
+  });
   const [tab, setTab] = useState("spreads");
   const [search, setSearch] = useState("");
   const [tblMin, setTblMin] = useState(-1);
@@ -102,6 +113,7 @@ export default function Dashboard() {
 
   const hiddenSet = useMemo(() => new Set(hiddenExchanges), [hiddenExchanges]);
   const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
+  const blacklistSet = useMemo(() => new Set(blacklist), [blacklist]);
   const sortedSpreads = useMemo(() => {
     return spreads
       .slice()
@@ -110,11 +122,11 @@ export default function Dashboard() {
       ));
   }, [spreads, favoriteSet]);
   const visibleSpreads = useMemo(() => {
-    return sortedSpreads.filter(s => pairVisible(s, hiddenSet));
-  }, [sortedSpreads, hiddenSet]);
+    return sortedSpreads.filter(s => symbolAllowed(s, blacklistSet) && pairVisible(s, hiddenSet));
+  }, [sortedSpreads, blacklistSet, hiddenSet]);
   const visibleHistory = useMemo(() => {
-    return history.filter(s => pairVisible(s, hiddenSet));
-  }, [history, hiddenSet]);
+    return history.filter(s => symbolAllowed(s, blacklistSet) && pairVisible(s, hiddenSet));
+  }, [history, blacklistSet, hiddenSet]);
   const visibleHealth = useMemo(() => {
     return health.filter(h => !hiddenSet.has(h.exchange));
   }, [health, hiddenSet]);
@@ -123,9 +135,10 @@ export default function Dashboard() {
       s.net_spread_pct >= sigMin
       && s.buy_on !== "dex"
       && s.sell_on !== "dex"
+      && symbolAllowed(s, blacklistSet)
       && pairVisible(s, hiddenSet)
     );
-  }, [signals, sigMin, hiddenSet]);
+  }, [signals, sigMin, blacklistSet, hiddenSet]);
 
   const toggleFavorite = useCallback(symbol => {
     const normalized = symbol.toUpperCase();
@@ -171,16 +184,14 @@ export default function Dashboard() {
     let active = true;
     async function poll() {
       try {
-        const [s, sp, h, b] = await Promise.all([
+        const [s, sp, h] = await Promise.all([
           fetch(`${API}/stats`), fetch(`${API}/spreads`),
-          fetch(`${API}/health`), fetch(`${API}/blacklist`),
+          fetch(`${API}/health`),
         ]);
         if (!active) return;
         setStats(await s.json());
         setSpreads(await sp.json());
         setHealth(await h.json());
-        const bl = await b.json();
-        setBL(bl.symbols || []);
       } catch {}
     }
     poll();
@@ -210,15 +221,22 @@ export default function Dashboard() {
   useEffect(() => { const id = setInterval(() => setTick(t => t + 1), 10000); return () => clearInterval(id); }, []);
 
   const block = async sym => {
-    setBL(p => [...p, sym.toUpperCase()].sort());
-    fetch(`${API}/blacklist/add`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: sym }) })
-      .catch(() => setBL(p => p.filter(s => s !== sym.toUpperCase())));
+    const normalized = sym.toUpperCase();
+    setBL(prev => {
+      if (prev.includes(normalized)) return prev;
+      const next = [...prev, normalized].sort();
+      try { localStorage.setItem(BLACKLIST_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
   };
 
   const unblock = async sym => {
-    setBL(p => p.filter(s => s !== sym.toUpperCase()));
-    fetch(`${API}/blacklist/remove`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ symbol: sym }) })
-      .catch(() => setBL(p => [...p, sym.toUpperCase()].sort()));
+    const normalized = sym.toUpperCase();
+    setBL(prev => {
+      const next = prev.filter(s => s !== normalized);
+      try { localStorage.setItem(BLACKLIST_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      return next;
+    });
   };
 
   const TABS = ["spreads", "charts", "signals", "health", "history", "blacklist"];
@@ -272,7 +290,7 @@ export default function Dashboard() {
           {stats && (
             <div className="status-right">
               <Chip l="History" v={stats.signals_history} />
-              {stats.blacklisted > 0 && <Chip l="Blocked" v={stats.blacklisted} warn />}
+              {blacklist.length > 0 && <Chip l="Blocked" v={blacklist.length} warn />}
             </div>
           )}
         </div>
@@ -309,8 +327,8 @@ export default function Dashboard() {
       <main className="dash-main">
         <AnimatePresence mode="wait">
           <motion.div key={tab} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.2 }}>
-            {tab === "spreads" && <SpreadsTab spreads={visibleSpreads} allSpreads={spreads} search={search} setSearch={setSearch} min={tblMin} setMin={setTblMin} onBlock={block} blocked={blacklist} favoriteSet={favoriteSet} onToggleFavorite={toggleFavorite} />}
-            {tab === "charts" && <ChartsTab spreads={sortedSpreads} hiddenExchanges={hiddenExchanges} favoriteSymbols={favorites} onToggleFavorite={toggleFavorite} />}
+            {tab === "spreads" && <SpreadsTab spreads={visibleSpreads} allSpreads={visibleSpreads} search={search} setSearch={setSearch} min={tblMin} setMin={setTblMin} onBlock={block} blocked={blacklist} favoriteSet={favoriteSet} onToggleFavorite={toggleFavorite} />}
+            {tab === "charts" && <ChartsTab spreads={visibleSpreads} hiddenExchanges={hiddenExchanges} favoriteSymbols={favorites} onToggleFavorite={toggleFavorite} />}
             {tab === "signals" && (
               filtSig.length === 0
                 ? <Empty t="Waiting for signals..." d={`${stats?.price_updates?.toLocaleString() || 0} updates processed. Signals appear when spreads exceed thresholds.`} />

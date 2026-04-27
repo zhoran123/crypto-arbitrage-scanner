@@ -8,6 +8,7 @@ MAX_SLIPPAGE_PCT = 0.2
 REFRESH_INTERVAL = 60
 TOP_N = 24
 CACHE_TTL = 120
+ZERO_CACHE_TTL = 15
 BOOK_TTL = 45
 DEPTH = 20
 MAX_CONCURRENCY = 6
@@ -18,6 +19,7 @@ class OrderbookFetcher:
         self._books: dict[tuple[str, str], dict] = {}
         self._size_cache: dict[tuple[str, str, str], float] = {}
         self._size_ts: dict[tuple[str, str, str], float] = {}
+        self._pair_locks: dict[tuple[str, str, str], asyncio.Lock] = {}
         self._dex_liquidity: dict[str, float] = {}
         self._session: aiohttp.ClientSession | None = None
 
@@ -38,6 +40,41 @@ class OrderbookFetcher:
         if time.time() - ts > CACHE_TTL:
             return 0.0
         return self._size_cache.get(key, 0.0)
+
+    async def refresh_pair_size(self, symbol: str, buy_exchange: str, sell_exchange: str) -> float:
+        if not self._session:
+            return 0.0
+
+        symbol = symbol.upper()
+        key = (symbol, buy_exchange, sell_exchange)
+        lock = self._pair_locks.setdefault(key, asyncio.Lock())
+
+        async with lock:
+            now = time.time()
+            if key in self._size_cache:
+                cached_size = self._size_cache.get(key, 0.0)
+                ttl = ZERO_CACHE_TTL if cached_size <= 0 else CACHE_TTL
+                if now - self._size_ts.get(key, 0) <= ttl:
+                    return cached_size
+
+            exchanges = {buy_exchange, sell_exchange}
+            tasks = []
+
+            for exchange in exchanges:
+                if exchange == "dex":
+                    continue
+                cached = self._books.get((symbol, exchange))
+                if cached and (now - cached.get("ts", 0)) <= BOOK_TTL:
+                    continue
+                tasks.append(self._fetch_book(symbol, exchange))
+
+            if tasks:
+                await asyncio.gather(*tasks, return_exceptions=True)
+
+            max_size = self._estimate_pair_size(symbol, buy_exchange, sell_exchange)
+            self._size_cache[key] = max_size
+            self._size_ts[key] = time.time()
+            return max_size
 
     async def refresh_for_spreads(self, spreads: list[dict]):
         if not self._session:

@@ -110,6 +110,17 @@ def _get_exchange_age(symbol: str, exchange: str) -> float:
 def _build_fill_metrics(symbol: str, buy_exchange: str, sell_exchange: str, gross_spread: float) -> tuple[float, float]:
     symbol = symbol.upper()
     max_size = orderbook.get_max_size(symbol, buy_exchange, sell_exchange)
+    return _estimate_fill_metrics(symbol, buy_exchange, sell_exchange, gross_spread, max_size)
+
+
+def _estimate_fill_metrics(
+    symbol: str,
+    buy_exchange: str,
+    sell_exchange: str,
+    gross_spread: float,
+    max_size: float,
+) -> tuple[float, float]:
+    symbol = symbol.upper()
     fill_prob = fill_probability.estimate(
         symbol=symbol,
         buy_exchange=buy_exchange,
@@ -122,6 +133,35 @@ def _build_fill_metrics(symbol: str, buy_exchange: str, sell_exchange: str, gros
         sell_health=health.get_exchange_status(sell_exchange),
     )
     return max_size, fill_prob
+
+
+async def _send_telegram_signal(signal: dict):
+    if not telegram:
+        return
+
+    tg_signal = dict(signal)
+    symbol = tg_signal.get("symbol", "").upper()
+    buy_exchange = tg_signal.get("buy_on", "")
+    sell_exchange = tg_signal.get("sell_on", "")
+    gross_spread = tg_signal.get("deviation_pct", 0.0)
+
+    max_size = float(tg_signal.get("max_size_usd") or 0)
+    if max_size <= 0:
+        try:
+            max_size = await orderbook.refresh_pair_size(symbol, buy_exchange, sell_exchange)
+        except Exception as exc:
+            print(f"[OrderBook] on-demand refresh failed for {symbol} {buy_exchange}->{sell_exchange}: {exc}")
+            return
+
+        if max_size <= 0:
+            print(f"[Telegram] skipped {symbol} {buy_exchange}->{sell_exchange}: max_size is 0 after refresh")
+            return
+
+        max_size, fill_prob = _estimate_fill_metrics(symbol, buy_exchange, sell_exchange, gross_spread, max_size)
+        tg_signal["max_size_usd"] = round(max_size, 2)
+        tg_signal["fill_prob_pct"] = fill_prob
+
+    await asyncio.to_thread(telegram.on_signal, tg_signal)
 
 
 def _build_dex_reference(symbol: str, buy_price: float, sell_price: float) -> dict | None:
@@ -175,7 +215,7 @@ def on_signal(signal: dict):
 
     is_dex_trade = "dex" in (signal.get("buy_on", ""), signal.get("sell_on", ""))
     if telegram and not is_dex_trade and net_spread >= MIN_TG_SPREAD:
-        telegram.on_signal(signal)
+        asyncio.create_task(_send_telegram_signal(signal))
 
 
 async def signal_sender():

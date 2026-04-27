@@ -57,6 +57,7 @@ tg_cooldown = float(os.getenv("TELEGRAM_COOLDOWN", "30"))
 SIGNAL_EVAL_INTERVAL = float(os.getenv("SIGNAL_EVAL_INTERVAL", "1.0"))
 PRICE_SAMPLE_INTERVAL = float(os.getenv("PRICE_SAMPLE_INTERVAL", "1.0"))
 MAX_SIGNAL_PRICE_AGE = float(os.getenv("MAX_SIGNAL_PRICE_AGE", "5.0"))
+MIN_TG_MAX_SIZE_USD = float(os.getenv("MIN_TG_MAX_SIZE_USD", "1.0"))
 
 telegram: TelegramAlerter | None = None
 if tg_token and tg_chat:
@@ -146,15 +147,18 @@ async def _send_telegram_signal(signal: dict):
     gross_spread = tg_signal.get("deviation_pct", 0.0)
 
     max_size = float(tg_signal.get("max_size_usd") or 0)
-    if max_size <= 0:
+    if max_size < MIN_TG_MAX_SIZE_USD:
         try:
             max_size = await orderbook.refresh_pair_size(symbol, buy_exchange, sell_exchange)
         except Exception as exc:
             print(f"[OrderBook] on-demand refresh failed for {symbol} {buy_exchange}->{sell_exchange}: {exc}")
             return
 
-        if max_size <= 0:
-            print(f"[Telegram] skipped {symbol} {buy_exchange}->{sell_exchange}: max_size is 0 after refresh")
+        if max_size < MIN_TG_MAX_SIZE_USD:
+            print(
+                f"[Telegram] skipped {symbol} {buy_exchange}->{sell_exchange}: "
+                f"max_size ${max_size:.2f} is below ${MIN_TG_MAX_SIZE_USD:.2f}"
+            )
             return
 
         max_size, fill_prob = _estimate_fill_metrics(symbol, buy_exchange, sell_exchange, gross_spread, max_size)

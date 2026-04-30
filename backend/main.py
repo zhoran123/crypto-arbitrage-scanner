@@ -377,13 +377,21 @@ def _compute_spreads() -> list:
     return result
 
 
+MAX_FALLBACK_AGE = 30.0
+
+
 def _snapshot_symbol_candles(symbol: str) -> dict:
     snapshot = {}
-    ts = int(time.time() // 60) * 60
+    now = time.time()
+    ts = int(now // 60) * 60
     for exchange, data in aggregator.prices.get(symbol.upper(), {}).items():
         bid = data.get("bid", 0)
         ask = data.get("ask", 0)
         if bid <= 0 or ask <= 0:
+            continue
+        # Skip stale aggregator entries — they would otherwise be returned as
+        # a "fresh" single-candle for the current minute and confuse the chart.
+        if now - data.get("ts", 0) > MAX_FALLBACK_AGE:
             continue
         mid = (bid + ask) / 2
         snapshot[exchange] = {"t": ts, "o": mid, "h": mid, "l": mid, "c": mid}

@@ -49,7 +49,10 @@ class MexcConnector(BaseConnector):
 
                         if channel == "push.ticker":
                             d = data.get("data", {})
-                            symbol_raw = data.get("symbol", "")
+                            # MEXC contract WS puts `symbol` inside the `data`
+                            # payload for regular push.ticker messages; only
+                            # subscribe-ack carries it at the top level.
+                            symbol_raw = d.get("symbol") or data.get("symbol", "")
                             bid = d.get("bid1")
                             ask = d.get("ask1")
 

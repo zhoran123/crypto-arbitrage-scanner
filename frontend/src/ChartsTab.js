@@ -108,7 +108,7 @@ function MiniChart({ symbol, tf, height, hiddenExchanges, liveData, isFavorite, 
   const applyHistoryData = data => {
     if (!chartRef.current) return 0;
     const chart = chartRef.current;
-    const exchs = Object.keys(data).filter(ex => data[ex]?.length > 0);
+    const exchs = Object.keys(data).filter(ex => data[ex]?.length >= 2);
 
     removeAllSeries(chart);
     exchs.forEach(ex => {

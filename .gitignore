@@ -12,7 +12,8 @@ backend/.env*
 dist/
 .DS_Store
 Thumbs.db
+.claude/
+.vscode/
 .vs/
-.claude/settings.local.json
 *.slnx
 *.suo

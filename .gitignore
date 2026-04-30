@@ -15,5 +15,7 @@ Thumbs.db
 .claude/
 .vscode/
 .vs/
+CLAUDE.md
+AGENTS.md
 *.slnx
 *.suo

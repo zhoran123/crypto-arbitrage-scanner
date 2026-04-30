@@ -4,6 +4,10 @@ frontend/build/
 __pycache__/
 *.pyc
 .env
+.env.*
+!.env.example
+backend/.env*
+!backend/.env.example
 *.egg-info/
 dist/
 .DS_Store

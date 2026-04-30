@@ -506,6 +506,13 @@ async def get_telegram_status():
     }
 
 
+@app.get("/public-config")
+async def get_public_config():
+    return {
+        "telegram_invite_url": os.getenv("TELEGRAM_INVITE_URL", ""),
+    }
+
+
 @app.on_event("startup")
 async def startup():
     import config
